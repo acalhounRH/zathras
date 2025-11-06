@@ -4,6 +4,12 @@ OpenSearch Exporter
 
 Handles exporting processed benchmark results to OpenSearch/Elasticsearch.
 Supports bulk operations, retry logic, and connection management.
+
+Updated for object-based schema with:
+- Dynamic keys for runs, NUMA nodes, storage devices
+- Boolean object for CPU flags
+- Timestamp-keyed time series
+- Named metrics objects
 """
 
 import json
@@ -12,8 +18,15 @@ import time
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from urllib.parse import urljoin
+from pathlib import Path
 import urllib.request
 import urllib.error
+
+# Import schema for type hints
+try:
+    from ..schema import ZathrasDocument
+except ImportError:
+    ZathrasDocument = None
 
 
 class OpenSearchExporter:
@@ -24,6 +37,8 @@ class OpenSearchExporter:
         url: str,
         index: str,
         auth_token: Optional[str] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
         verify_ssl: bool = True,
         timeout: int = 30,
         max_retries: int = 3,
@@ -35,7 +50,9 @@ class OpenSearchExporter:
         Args:
             url: OpenSearch endpoint URL (e.g., https://opensearch.example.com)
             index: Index name to write documents to
-            auth_token: Optional authentication token
+            auth_token: Optional bearer token for authentication
+            username: Optional username for basic auth
+            password: Optional password for basic auth
             verify_ssl: Whether to verify SSL certificates
             timeout: Request timeout in seconds
             max_retries: Maximum number of retry attempts
@@ -44,6 +61,8 @@ class OpenSearchExporter:
         self.url = url.rstrip('/')
         self.index = index
         self.auth_token = auth_token
+        self.username = username
+        self.password = password
         self.verify_ssl = verify_ssl
         self.timeout = timeout
         self.max_retries = max_retries
@@ -59,6 +78,12 @@ class OpenSearchExporter:
         
         if self.auth_token:
             headers['Authorization'] = f'Bearer {self.auth_token}'
+        elif self.username and self.password:
+            # Basic auth
+            import base64
+            credentials = f"{self.username}:{self.password}"
+            encoded = base64.b64encode(credentials.encode('utf-8')).decode('ascii')
+            headers['Authorization'] = f'Basic {encoded}'
             
         return headers
     
@@ -147,9 +172,50 @@ class OpenSearchExporter:
             self.logger.error(f"Connection test failed: {str(e)}")
             return False
     
-    def ensure_index_exists(self) -> bool:
+    def apply_index_template(self, template_file: Optional[str] = None) -> bool:
+        """
+        Apply OpenSearch index template for object-based schema.
+        
+        Args:
+            template_file: Path to template JSON file. If None, uses default template.
+            
+        Returns:
+            True if template applied successfully
+        """
+        try:
+            if template_file:
+                with open(template_file, 'r') as f:
+                    template = json.load(f)
+            else:
+                # Use default template from config
+                config_dir = Path(__file__).parent.parent / 'config'
+                template_path = config_dir / 'opensearch_index_template.json'
+                
+                if template_path.exists():
+                    with open(template_path, 'r') as f:
+                        template = json.load(f)
+                else:
+                    self.logger.warning("No index template found, skipping template application")
+                    return False
+            
+            # Apply template
+            template_name = f"zathras-results-template"
+            endpoint = f"/_index_template/{template_name}"
+            
+            self._make_request(endpoint, method='PUT', data=template)
+            self.logger.info(f"Applied index template: {template_name}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to apply index template: {str(e)}")
+            return False
+    
+    def ensure_index_exists(self, apply_template: bool = True) -> bool:
         """
         Ensure the target index exists, create if it doesn't.
+        
+        Args:
+            apply_template: If True, apply index template before creating index
         
         Returns:
             True if index exists or was created successfully
@@ -160,41 +226,22 @@ class OpenSearchExporter:
             self.logger.info(f"Index '{self.index}' already exists")
             return True
         except:
+            # Apply template first if requested
+            if apply_template:
+                self.apply_index_template()
+            
             # Index doesn't exist, create it
+            # If template was applied, this will use the template settings
             try:
+                # Simple index creation - template will handle mappings
                 index_settings = {
                     "settings": {
-                        "number_of_shards": 1,
+                        "number_of_shards": 3,
                         "number_of_replicas": 1,
                         "index": {
                             "mapping": {
                                 "total_fields": {
-                                    "limit": 2000
-                                }
-                            }
-                        }
-                    },
-                    "mappings": {
-                        "properties": {
-                            "test_run": {
-                                "properties": {
-                                    "timestamp": {"type": "date"},
-                                    "zathras_version": {"type": "keyword"}
-                                }
-                            },
-                            "infrastructure": {
-                                "properties": {
-                                    "type": {"type": "keyword"},
-                                    "instance_type": {"type": "keyword"},
-                                    "region": {"type": "keyword"}
-                                }
-                            },
-                            "test": {
-                                "properties": {
-                                    "name": {"type": "keyword"},
-                                    "version": {"type": "keyword"},
-                                    "status": {"type": "keyword"},
-                                    "duration_seconds": {"type": "float"}
+                                    "limit": 5000  # Higher limit for dynamic fields
                                 }
                             }
                         }
@@ -205,15 +252,44 @@ class OpenSearchExporter:
                 self.logger.info(f"Created index '{self.index}'")
                 return True
             except Exception as e:
-                self.logger.error(f"Failed to create index: {str(e)}")
+                error_msg = str(e)
+                # Index already exists is actually success
+                if 'resource_already_exists_exception' in error_msg or 'index_already_exists' in error_msg:
+                    self.logger.info(f"Index '{self.index}' already exists")
+                    return True
+                self.logger.error(f"Failed to create index: {error_msg}")
                 return False
+    
+    def export_zathras_document(self, document: 'ZathrasDocument') -> str:
+        """
+        Export a ZathrasDocument to OpenSearch.
+        
+        Args:
+            document: ZathrasDocument object to export
+            
+        Returns:
+            Document ID of the indexed document
+            
+        Raises:
+            Exception: If export fails
+        """
+        # Convert to dict
+        if hasattr(document, 'to_dict'):
+            doc_dict = document.to_dict()
+        else:
+            doc_dict = document
+        
+        # Use document_id from metadata as OpenSearch document ID
+        doc_id = doc_dict.get('metadata', {}).get('document_id')
+        
+        return self.export_document(doc_dict, doc_id=doc_id)
     
     def export_document(self, document: Dict[str, Any], doc_id: Optional[str] = None) -> str:
         """
         Export a single document to OpenSearch.
         
         Args:
-            document: Document to export
+            document: Document to export (dict or ZathrasDocument)
             doc_id: Optional document ID (auto-generated if not provided)
             
         Returns:
@@ -222,11 +298,15 @@ class OpenSearchExporter:
         Raises:
             Exception: If export fails
         """
+        # Handle ZathrasDocument objects
+        if ZathrasDocument and isinstance(document, ZathrasDocument):
+            return self.export_zathras_document(document)
+        
         # Add export metadata
         document['_export_metadata'] = {
             'exported_at': datetime.utcnow().isoformat() + 'Z',
             'exporter': 'zathras-opensearch-exporter',
-            'exporter_version': '0.1.0'
+            'exporter_version': '1.0.0'
         }
         
         # Determine endpoint

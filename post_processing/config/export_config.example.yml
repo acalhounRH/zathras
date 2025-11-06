@@ -1,0 +1,67 @@
+# Zathras Post-Processing Export Configuration
+# Copy this file to export_config.yml and update with your settings
+
+# OpenSearch Configuration
+opensearch:
+  enabled: true
+  url: "https://opensearch.app.intlab.redhat.com/"
+  index: "zathras-results"
+  
+  # Authentication (choose one)
+  # Option 1: Bearer token
+  auth_token: "${OPENSEARCH_TOKEN}"
+  
+  # Option 2: Basic auth (uncomment if using)
+  # username: "${OPENSEARCH_USER}"
+  # password: "${OPENSEARCH_PASSWORD}"
+  
+  # SSL/TLS settings
+  verify_ssl: true
+  
+  # Performance settings
+  timeout: 30
+  max_retries: 3
+  retry_delay: 5
+  
+  # Apply index template on first run
+  apply_template: true
+  template_file: null  # null = use default template
+
+# Horreum Configuration
+horreum:
+  enabled: false
+  url: "https://horreum.example.com"
+  test_name: "zathras-benchmarks"
+  
+  # Authentication
+  auth_token: "${HORREUM_TOKEN}"
+  
+  # Test metadata
+  owner: "zathras-team"
+  access: "PUBLIC"  # PUBLIC, PROTECTED, or PRIVATE
+  
+  # Performance settings
+  timeout: 30
+  max_retries: 3
+  retry_delay: 5
+
+# Processing Options
+processing:
+  # Continue on export errors
+  continue_on_error: false
+  
+  # Batch size for bulk exports
+  batch_size: 100
+  
+  # Validate documents before export
+  validate_schema: true
+  
+  # Add export metadata
+  add_metadata: true
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: null  # null = stdout only, or path to log file
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
