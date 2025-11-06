@@ -1,7 +1,13 @@
 """
-Test Result Processors
+Zathras Test Result Processors
 
-Each processor is responsible for parsing and extracting metrics
-from a specific test wrapper's output format.
+Processors convert raw test results into structured JSON documents
+using the object-based schema.
+
+Each processor handles a specific benchmark type (CoreMark, FIO, STREAMS, etc.)
 """
 
+__all__ = [
+    'base_processor',
+    'coremark_processor'
+]

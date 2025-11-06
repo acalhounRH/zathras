@@ -1,7 +1,11 @@
 """
-Utility Functions
+Zathras Post-Processing Utilities
 
-Common utilities for metadata extraction, archive handling,
-and other shared functionality.
+Common utility modules for processing Zathras benchmark results.
 """
 
+__all__ = [
+    'archive_handler',
+    'parser_utils',
+    'metadata_extractor'
+]
