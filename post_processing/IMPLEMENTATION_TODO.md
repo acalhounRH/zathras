@@ -55,6 +55,12 @@ This TODO list tracks the implementation of the Zathras post-processing pipeline
 
 **Status:** ✅ COMPLETED - 430 lines, 18 dataclasses, validation and JSON serialization implemented
 
+**Key Schema Improvements Made:**
+- CPU flags as boolean object: `{avx2: true, sse4: true}` (not array)
+- Time series with metrics object: `{sequence: 0, metrics: {iterations_per_second: X}}` (not generic value)
+- Multiple metrics per timestamp support
+- Improved config parsing: tuned profile, structured kernel parameters
+
 ---
 
 ### [x] Task 2: Archive Handler Utility
@@ -170,13 +176,13 @@ class MetadataExtractor:
 - Storage devices (numbered objects)
 - Network interfaces (numbered objects)
 
-**Status:** ✅ COMPLETED - 520 lines, MetadataExtractor class with object-based output
+**Status:** ✅ COMPLETED - 570 lines, MetadataExtractor class with object-based output, improved parsing for tuned/kernel params
 
 ---
 
-## Phase 2: Core Processing
+## Phase 2: Core Processing ✅ **COMPLETED**
 
-### [ ] Task 5: Base Processor Class
+### [x] Task 5: Base Processor Class
 **File:** `post_processing/processors/base_processor.py`  
 **Purpose:** Abstract base class for all test processors  
 **Priority:** HIGH  
@@ -225,9 +231,11 @@ class BaseProcessor(ABC):
 - Build complete document structure
 - Validation and error handling
 
+**Status:** ✅ COMPLETED - 430 lines, BaseProcessor abstract class with full extraction pipeline
+
 ---
 
-### [ ] Task 6: CoreMark Processor
+### [x] Task 6: CoreMark Processor
 **File:** `post_processing/processors/coremark_processor.py`  
 **Purpose:** Process CoreMark benchmark results into object-based schema  
 **Priority:** HIGH  
@@ -294,6 +302,20 @@ class CoreMarkProcessor(BaseProcessor):
 - Object structure matches spec
 - Time series properly formatted
 - All metadata extracted
+
+**Status:** ✅ COMPLETED - 200 lines test script, all validations passing
+
+**Test Results:**
+- ✅ Runs are objects (not arrays): `{run_1: {}, run_2: {}}`
+- ✅ Timeseries uses timestamp keys: `"2025-11-06T05:09:45.000Z"`
+- ✅ Sequence field present for ordering
+- ✅ Metrics object supports multiple values
+- ✅ CPU info present and structured
+- ✅ Memory info present
+- ✅ NUMA info as object (node_0, node_1)
+- ✅ CPU flags as boolean object: `{avx2: true, sse4: true}`
+- ✅ Document validation passed
+- ✅ Output JSON: `post_processing/tests/output_coremark.json` (excluded from git)
 
 ---
 
