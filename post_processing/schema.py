@@ -351,6 +351,133 @@ class ZathrasDocument:
         """Convert to JSON string"""
         return json.dumps(self.to_dict(), indent=indent)
     
+    def to_dict_summary_only(self) -> Dict[str, Any]:
+        """
+        Convert to dictionary WITHOUT timeseries data.
+        Only includes timeseries_summary for each run.
+        Used for the main zathras-results index.
+        """
+        result = self.to_dict()
+        
+        # Remove timeseries from all runs
+        if 'results' in result and 'runs' in result['results']:
+            for run_key, run_data in result['results']['runs'].items():
+                if 'timeseries' in run_data:
+                    del run_data['timeseries']
+        
+        return result
+    
+    def extract_timeseries_documents(self) -> List['TimeSeriesDocument']:
+        """
+        Extract all time series points as individual TimeSeriesDocument objects.
+        Used for the zathras-timeseries index.
+        
+        Maintains same top-level structure as summary document for consistency.
+        
+        Returns list of TimeSeriesDocument objects (one per time series point).
+        """
+        ts_docs = []
+        
+        # Iterate through all runs
+        for run_key, run in self.results.runs.items():
+            if not run.timeseries:
+                continue
+            
+            # Get benchmark name (for multi-benchmark tests like PyPerf)
+            benchmark_name = run.metrics.get('benchmark_name') if run.metrics else None
+            benchmark_desc = run.metrics.get('description') if run.metrics else None
+            
+            # Determine unit from first metric or default
+            unit = "unknown"
+            if run.metrics:
+                # Try to infer unit from metric names
+                for metric_name in run.metrics.keys():
+                    if 'seconds' in metric_name or '_sec' in metric_name:
+                        unit = "seconds"
+                        break
+                    elif 'bops' in metric_name:
+                        unit = "bops"
+                        break
+                    elif 'mb_per_sec' in metric_name or 'bandwidth' in metric_name:
+                        unit = "MB/s"
+                        break
+            
+            # Process each time series point
+            for seq_key, ts_point in run.timeseries.items():
+                # Extract sequence number from key (e.g., "sequence_0" -> 0)
+                sequence = int(seq_key.split('_')[1])
+                
+                # Generate unique timeseries_id
+                ts_id = f"{self.metadata.document_id}_{run_key}_{seq_key}"
+                
+                # Get primary value (first metric or explicit 'value' field)
+                value = None
+                point_metrics = {}
+                
+                if ts_point.metrics:
+                    # Look for common value field names
+                    if 'value_seconds' in ts_point.metrics:
+                        value = ts_point.metrics['value_seconds']
+                        point_metrics = {k: v for k, v in ts_point.metrics.items() if k != 'value_seconds'}
+                    elif 'throughput_bops' in ts_point.metrics:
+                        value = ts_point.metrics['throughput_bops']
+                        point_metrics = {k: v for k, v in ts_point.metrics.items() if k != 'throughput_bops'}
+                    elif 'value' in ts_point.metrics:
+                        value = ts_point.metrics['value']
+                        point_metrics = {k: v for k, v in ts_point.metrics.items() if k != 'value'}
+                    else:
+                        # Use first numeric metric as value
+                        for k, v in ts_point.metrics.items():
+                            if isinstance(v, (int, float)):
+                                value = v
+                                point_metrics = {kk: vv for kk, vv in ts_point.metrics.items() if kk != k}
+                                break
+                
+                if value is None:
+                    continue  # Skip points without values
+                
+                # Build time series document with hierarchical structure
+                ts_metadata = TimeSeriesMetadata(
+                    document_id=self.metadata.document_id,
+                    timeseries_id=ts_id,
+                    timestamp=ts_point.timestamp,
+                    sequence=sequence,
+                    test_timestamp=self.metadata.test_timestamp,
+                    processing_timestamp=self.metadata.processing_timestamp,
+                    os_vendor=self.metadata.os_vendor,
+                    cloud_provider=self.metadata.cloud_provider,
+                    instance_type=self.metadata.instance_type,
+                    scenario_name=self.metadata.scenario_name,
+                    iteration=self.metadata.iteration
+                )
+                
+                ts_run = TimeSeriesRun(
+                    run_key=run_key,
+                    run_number=run.run_number,
+                    status=run.status,
+                    configuration=run.configuration,
+                    benchmark_name=benchmark_name,
+                    benchmark_description=benchmark_desc
+                )
+                
+                ts_results = TimeSeriesResults(
+                    run=ts_run,
+                    value=value,
+                    unit=unit,
+                    point_metrics=point_metrics if point_metrics else None
+                )
+                
+                ts_doc = TimeSeriesDocument(
+                    metadata=ts_metadata,
+                    test=self.test,
+                    system_under_test=self.system_under_test,
+                    results=ts_results
+                )
+                
+                ts_docs.append(ts_doc)
+        
+        return ts_docs
+    
     def validate(self) -> tuple[bool, List[str]]:
         """
         Validate document structure
@@ -396,6 +523,88 @@ def create_sequence_key(sequence: int) -> str:
 def parse_timestamp_key(timestamp_key: str) -> datetime:
     """Parse timestamp key back to datetime object"""
     return datetime.fromisoformat(timestamp_key.replace('Z', '+00:00'))
+
+
+@dataclass
+class TimeSeriesMetadata:
+    """Metadata section for time series document"""
+    document_id: str  # Parent document ID
+    timeseries_id: str  # Unique ID for this time series point
+    timestamp: str  # ISO 8601 timestamp for the data point
+    sequence: int  # Sequence number within the run
+    test_timestamp: Optional[str] = None  # When test was run
+    processing_timestamp: Optional[str] = None  # When processed
+    os_vendor: Optional[str] = None
+    cloud_provider: Optional[str] = None
+    instance_type: Optional[str] = None
+    scenario_name: Optional[str] = None
+    iteration: Optional[int] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+
+@dataclass
+class TimeSeriesRun:
+    """Run details for time series document"""
+    run_key: str  # e.g., "run_0"
+    run_number: int  # 0, 1, 2, etc.
+    status: str  # PASS, FAIL, etc.
+    configuration: Optional[Dict[str, Any]] = None
+    benchmark_name: Optional[str] = None  # For multi-benchmark tests
+    benchmark_description: Optional[str] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+
+@dataclass
+class TimeSeriesResults:
+    """Results section for time series document"""
+    run: TimeSeriesRun  # The run this point belongs to
+    value: float  # Primary measurement value
+    unit: str  # Unit of measurement (seconds, bops, MB/s, etc.)
+    point_metrics: Optional[Dict[str, Any]] = None  # Point-specific extras
+    
+    def to_dict(self) -> Dict[str, Any]:
+        result = {
+            'run': self.run.to_dict(),
+            'value': self.value,
+            'unit': self.unit
+        }
+        if self.point_metrics:
+            result['point_metrics'] = self.point_metrics
+        return result
+
+
+@dataclass
+class TimeSeriesDocument:
+    """
+    Individual time series data point document for zathras-timeseries index.
+    
+    Maintains same top-level structure as ZathrasDocument (summary) for consistency:
+    - metadata: Document identification and timestamps
+    - test: Test information
+    - system_under_test: Full SUT details (denormalized)
+    - results: The actual data point with run context
+    """
+    metadata: TimeSeriesMetadata
+    test: TestInfo
+    system_under_test: SystemUnderTest
+    results: TimeSeriesResults
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization"""
+        return {
+            "metadata": self.metadata.to_dict(),
+            "test": self.test.to_dict(),
+            "system_under_test": self.system_under_test.to_dict(),
+            "results": self.results.to_dict()
+        }
+    
+    def to_json(self, indent: int = 2) -> str:
+        """Serialize to JSON string"""
+        return json.dumps(self.to_dict(), indent=indent)
 
 
 def validate_json_schema(document: Dict[str, Any]) -> tuple[bool, List[str]]:

@@ -43,3 +43,6 @@ post_processing/extracted_zathras_results/
 # Post-processing: Ignore test outputs
 post_processing/**/__pycache__/
 post_processing/**/*.pyc
+# Post-processing: Ignore production data and temporary extraction directories
+production_data/
+

@@ -91,7 +91,8 @@ class OpenSearchExporter:
         self,
         endpoint: str,
         method: str = 'POST',
-        data: Optional[Dict] = None
+        data: Optional[Dict] = None,
+        is_bulk: bool = False
     ) -> Dict[str, Any]:
         """
         Make HTTP request to OpenSearch with retry logic.
@@ -99,7 +100,8 @@ class OpenSearchExporter:
         Args:
             endpoint: API endpoint path
             method: HTTP method
-            data: Request payload
+            data: Request payload (Dict for regular requests, str for bulk)
+            is_bulk: Whether this is a bulk request (uses different content-type)
             
         Returns:
             Response data as dictionary
@@ -110,10 +112,20 @@ class OpenSearchExporter:
         url = urljoin(self.url, endpoint)
         headers = self._build_headers()
         
+        # For bulk requests, use different content-type
+        if is_bulk:
+            headers['Content-Type'] = 'application/x-ndjson'
+        
         for attempt in range(self.max_retries):
             try:
                 # Prepare request
-                request_data = json.dumps(data).encode('utf-8') if data else None
+                if is_bulk:
+                    # Bulk data is already a string
+                    request_data = data.encode('utf-8') if data else None
+                else:
+                    # Regular JSON data
+                    request_data = json.dumps(data).encode('utf-8') if data else None
+                
                 req = urllib.request.Request(
                     url,
                     data=request_data,
@@ -406,19 +418,114 @@ class OpenSearchExporter:
             self.logger.error(f"Failed to delete document {doc_id}: {str(e)}")
             return False
     
-    def search(self, query: Dict[str, Any]) -> Dict[str, Any]:
+    def delete_by_query(self, query: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Execute a search query.
+        Delete documents matching a query.
         
         Args:
             query: OpenSearch query DSL
             
         Returns:
+            Deletion response with 'deleted' count
+        """
+        try:
+            return self._make_request(f'/{self.index}/_delete_by_query', method='POST', data=query)
+        except Exception as e:
+            self.logger.error(f"Delete by query failed: {str(e)}")
+            raise
+    
+    def search(self, query: Dict[str, Any], size: int = 100) -> Dict[str, Any]:
+        """
+        Execute a search query.
+        
+        Args:
+            query: OpenSearch query DSL
+            size: Maximum number of results to return (default: 100)
+            
+        Returns:
             Search results
         """
         try:
+            # Add size to query if not already present
+            if 'size' not in query:
+                query['size'] = size
+            
             return self._make_request(f'/{self.index}/_search', method='POST', data=query)
         except Exception as e:
             self.logger.error(f"Search failed: {str(e)}")
             raise
+    
+    def bulk_export(self, documents: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Export multiple documents using the Bulk API.
+        
+        Args:
+            documents: List of dicts with 'id' and 'document' keys
+                      [{'id': 'doc1', 'document': {...}}, ...]
+            
+        Returns:
+            Dict with stats: {'total': int, 'successful': int, 'failed': int, 'errors': List[str]}
+        """
+        if not documents:
+            return {'total': 0, 'successful': 0, 'failed': 0, 'errors': []}
+        
+        # Build bulk request body
+        # Format: {"index": {"_id": "id"}}\n{document}\n
+        bulk_body_lines = []
+        for doc in documents:
+            doc_id = doc.get('id')
+            document = doc.get('document')
+            
+            if not doc_id or not document:
+                continue
+            
+            # Action line
+            action = {"index": {"_id": doc_id}}
+            bulk_body_lines.append(json.dumps(action))
+            
+            # Document line
+            bulk_body_lines.append(json.dumps(document))
+        
+        # Join with newlines and add trailing newline
+        bulk_body = '\n'.join(bulk_body_lines) + '\n'
+        
+        try:
+            # Make bulk request
+            response = self._make_request(
+                f'/{self.index}/_bulk',
+                method='POST',
+                data=bulk_body,
+                is_bulk=True  # Special flag for bulk requests
+            )
+            
+            # Parse response
+            items = response.get('items', [])
+            successful = 0
+            failed = 0
+            errors = []
+            
+            for item in items:
+                index_result = item.get('index', {})
+                if index_result.get('status') in [200, 201]:
+                    successful += 1
+                else:
+                    failed += 1
+                    error_msg = index_result.get('error', {}).get('reason', 'Unknown error')
+                    errors.append(f"Doc {index_result.get('_id')}: {error_msg}")
+            
+            return {
+                'total': len(documents),
+                'successful': successful,
+                'failed': failed,
+                'errors': errors[:10]  # Limit error messages
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Bulk export failed: {str(e)}")
+            return {
+                'total': len(documents),
+                'successful': 0,
+                'failed': len(documents),
+                'errors': [str(e)]
+            }
 
