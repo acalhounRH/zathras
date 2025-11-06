@@ -19,7 +19,7 @@ from pathlib import Path
 import logging
 
 from .base_processor import BaseProcessor
-from ..schema import Run, TimeSeriesPoint, TimeSeriesSummary, create_run_key, create_timestamp_key
+from ..schema import Run, TimeSeriesPoint, TimeSeriesSummary, create_run_key, create_sequence_key
 from ..utils.parser_utils import (
     parse_csv_timeseries,
     parse_key_value_text,
@@ -201,8 +201,8 @@ class CoreMarkProcessor(BaseProcessor):
         return Run(
             run_number=run_number,
             status="PASS",  # Assume PASS if we got results
-            start_time=create_timestamp_key(start_time),
-            end_time=create_timestamp_key(end_time) if end_time else None,
+            start_time=start_time.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            end_time=end_time.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z" if end_time else None,
             duration_seconds=duration,
             configuration=config if config else None,
             metrics=metrics if metrics else None,
@@ -247,13 +247,14 @@ class CoreMarkProcessor(BaseProcessor):
             
             values.append(value)
             
-            # Create timestamp key (spaced 5 seconds apart as estimate)
+            # Create timestamp (spaced 5 seconds apart as estimate)
             timestamp = base_time + timedelta(seconds=sequence * 5)
-            ts_key = create_timestamp_key(timestamp)
+            timestamp_str = timestamp.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
             
-            # Create time series point
-            timeseries[ts_key] = TimeSeriesPoint(
-                sequence=sequence,
+            # Create sequence key and time series point
+            seq_key = create_sequence_key(sequence)
+            timeseries[seq_key] = TimeSeriesPoint(
+                timestamp=timestamp_str,
                 metrics={
                     'iterations_per_second': value
                 }

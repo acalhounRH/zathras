@@ -5,6 +5,12 @@ Horreum Exporter
 Handles exporting processed benchmark results to Horreum performance
 test results repository. Supports run submission, schema validation,
 and baseline management.
+
+Updated for object-based schema with:
+- Dynamic keys for runs, NUMA nodes, storage devices
+- Boolean object for CPU flags
+- Timestamp-keyed time series
+- Named metrics objects
 """
 
 import json
@@ -15,6 +21,12 @@ from datetime import datetime
 from urllib.parse import urljoin
 import urllib.request
 import urllib.error
+
+# Import schema for type hints
+try:
+    from ..schema import ZathrasDocument
+except ImportError:
+    ZathrasDocument = None
 
 
 class HorreumExporter:
@@ -196,6 +208,39 @@ class HorreumExporter:
             self.logger.error(f"Failed to create test: {str(e)}")
             raise
     
+    def export_zathras_document(self, document: 'ZathrasDocument') -> int:
+        """
+        Export a ZathrasDocument to Horreum.
+        
+        Args:
+            document: ZathrasDocument object to export
+            
+        Returns:
+            Run ID in Horreum
+            
+        Raises:
+            Exception: If export fails
+        """
+        # Convert to dict
+        if hasattr(document, 'to_dict'):
+            doc_dict = document.to_dict()
+        else:
+            doc_dict = document
+        
+        # Extract start/stop times from runtime_info or results
+        start_time = None
+        stop_time = None
+        
+        if 'runtime_info' in doc_dict:
+            start_time = doc_dict['runtime_info'].get('start_time')
+            stop_time = doc_dict['runtime_info'].get('end_time')
+        
+        # Fallback to metadata timestamp
+        if not start_time and 'metadata' in doc_dict:
+            start_time = doc_dict['metadata'].get('collection_timestamp')
+        
+        return self.export_run(doc_dict, start_time=start_time, stop_time=stop_time)
+    
     def export_run(
         self,
         document: Dict[str, Any],
@@ -207,7 +252,7 @@ class HorreumExporter:
         Export a benchmark run to Horreum.
         
         Args:
-            document: Benchmark result document
+            document: Benchmark result document (dict or ZathrasDocument)
             start_time: Run start time (ISO format)
             stop_time: Run stop time (ISO format)
             schema_uri: URI of the JSON schema (if applicable)
@@ -218,6 +263,10 @@ class HorreumExporter:
         Raises:
             Exception: If export fails
         """
+        # Handle ZathrasDocument objects
+        if ZathrasDocument and isinstance(document, ZathrasDocument):
+            return self.export_zathras_document(document)
+        
         # Ensure we have a test ID
         if not self.test_id:
             self.get_or_create_test()
@@ -225,7 +274,7 @@ class HorreumExporter:
         # Build run payload
         run_data = {
             "test": self.test_id,
-            "start": start_time or document.get('test_run', {}).get('timestamp', 
+            "start": start_time or document.get('metadata', {}).get('collection_timestamp', 
                                                  datetime.utcnow().isoformat() + 'Z'),
             "stop": stop_time or datetime.utcnow().isoformat() + 'Z',
             "owner": self.owner or "zathras",

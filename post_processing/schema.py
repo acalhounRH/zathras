@@ -23,10 +23,23 @@ class Metadata:
     document_id: str
     document_type: str = "zathras_test_result"
     zathras_version: str = "1.0"
-    collection_timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    
+    # Timestamps
+    test_timestamp: Optional[str] = None  # When the test was actually executed
+    processing_timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")  # When JSON was created
+    
+    # Deprecated (kept for backward compatibility, use test_timestamp instead)
+    collection_timestamp: Optional[str] = None
+    
+    # Source directory breakdown (e.g., rhel/azure/Standard_D8ds_v6_1)
+    os_vendor: Optional[str] = None
+    cloud_provider: Optional[str] = None
+    instance_type: Optional[str] = None
+    iteration: Optional[int] = None
+    scenario_name: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        return {k: v for k, v in asdict(self).items() if v is not None}
 
 
 @dataclass
@@ -188,16 +201,16 @@ class TimeSeriesPoint:
     """
     Single time series data point
     
-    Object-based structure allows multiple metrics at same timestamp:
+    Object-based structure with timestamp and metrics:
     {
-      "sequence": 0,
+      "timestamp": "2025-11-06T12:00:00.000Z",
       "metrics": {
         "iterations_per_second": 193245.2,
         "cpu_utilization": 98.5
       }
     }
     """
-    sequence: int  # Order index (0, 1, 2...) for maintaining temporal order
+    timestamp: str  # ISO 8601 timestamp string
     metrics: Dict[str, float] = field(default_factory=dict)  # Named metrics with values
     
     def to_dict(self) -> Dict[str, Any]:
@@ -231,7 +244,7 @@ class Run:
     configuration: Optional[Dict[str, Any]] = None
     metrics: Optional[Dict[str, Any]] = None
     timeseries_summary: Optional[TimeSeriesSummary] = None
-    timeseries: Optional[Dict[str, TimeSeriesPoint]] = None  # Timestamp keys
+    timeseries: Optional[Dict[str, TimeSeriesPoint]] = None  # Sequence keys: "sequence_0", "sequence_1", etc.
     validation: Optional[Dict[str, Any]] = None
     
     def to_dict(self) -> Dict[str, Any]:
@@ -359,14 +372,11 @@ class ZathrasDocument:
                 if not run_key.startswith("run_"):
                     errors.append(f"Invalid run key: {run_key}. Must start with 'run_'")
                 
-                # Validate timeseries has timestamp keys
+                # Validate timeseries has sequence keys
                 if run.timeseries:
                     for ts_key in run.timeseries.keys():
-                        try:
-                            # Verify it's a valid ISO 8601 timestamp
-                            datetime.fromisoformat(ts_key.replace('Z', '+00:00'))
-                        except ValueError:
-                            errors.append(f"Invalid timestamp key in {run_key}.timeseries: {ts_key}")
+                        if not ts_key.startswith("sequence_"):
+                            errors.append(f"Invalid sequence key in {run_key}.timeseries: {ts_key}. Must start with 'sequence_'")
         
         return (len(errors) == 0, errors)
 
@@ -378,9 +388,9 @@ def create_run_key(run_number: int) -> str:
     return f"run_{run_number}"
 
 
-def create_timestamp_key(dt: datetime) -> str:
-    """Generate standardized timestamp key in ISO 8601 format with milliseconds"""
-    return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+def create_sequence_key(sequence: int) -> str:
+    """Generate standardized sequence key: sequence_0, sequence_1, etc."""
+    return f"sequence_{sequence}"
 
 
 def parse_timestamp_key(timestamp_key: str) -> datetime:

@@ -33,8 +33,7 @@ from ..schema import (
     Results,
     PrimaryMetric,
     StatisticalSummary,
-    RuntimeInfo,
-    create_timestamp_key
+    RuntimeInfo
 )
 from ..utils.archive_handler import ArchiveHandler
 from ..utils.metadata_extractor import MetadataExtractor
@@ -155,16 +154,31 @@ class BaseProcessor(ABC):
         """Build metadata section"""
         test_name = self.get_test_name()
         system_name = self.result_dir.name
-        timestamp = datetime.utcnow()
+        processing_time = datetime.utcnow()
         
-        # Generate document ID: {test}_{system}_{timestamp}_{hash}
-        doc_id = f"{test_name}_{system_name}_{timestamp.strftime('%Y%m%d_%H%M%S')}"
+        # Try to extract actual test execution timestamp
+        test_timestamp_str = self._extract_test_timestamp()
+        
+        # Generate document ID: {test}_{system}_{timestamp}
+        doc_id = f"{test_name}_{system_name}_{processing_time.strftime('%Y%m%d_%H%M%S')}"
+        
+        # Parse directory structure for source metadata
+        # Expected structure: .../scenario_name/os_vendor/cloud_provider/instance_identifier/
+        # Example: production_data/az_rhel_10_ga/rhel/azure/Standard_D8ds_v6_1/
+        source_metadata = self._parse_directory_structure()
         
         return Metadata(
             document_id=doc_id,
             document_type="zathras_test_result",
             zathras_version="1.0",
-            collection_timestamp=create_timestamp_key(timestamp)
+            test_timestamp=test_timestamp_str,
+            processing_timestamp=processing_time.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            collection_timestamp=test_timestamp_str,  # Backward compatibility
+            os_vendor=source_metadata.get("os_vendor"),
+            cloud_provider=source_metadata.get("cloud_provider"),
+            instance_type=source_metadata.get("instance_type"),
+            iteration=source_metadata.get("iteration"),
+            scenario_name=source_metadata.get("scenario_name")
         )
     
     def build_test_info(self) -> TestInfo:
@@ -421,6 +435,111 @@ class BaseProcessor(ABC):
             return 'IOPS'
         else:
             return 'unit'
+    
+    def _extract_test_timestamp(self) -> Optional[str]:
+        """
+        Extract actual test execution timestamp from result files.
+        
+        Looks for timestamp in result directory names with format:
+        {benchmark}_{YYYY.MM.DD-HH.MM.SS}
+        
+        Examples:
+        - streams_2025.09.18-23.06.19
+        - coremark_2025.11.06-05.09.45
+        
+        Returns ISO 8601 formatted timestamp or None if not found
+        """
+        import re
+        
+        test_name = self.get_test_name()
+        
+        # Check extracted data for timestamp in directory names
+        if hasattr(self, 'extracted_data') and self.extracted_data:
+            extracted_path = self.extracted_data.get('results', {}).get('extracted_path')
+            if extracted_path:
+                path_obj = Path(extracted_path)
+                
+                # Look for directories matching pattern: {test}_YYYY.MM.DD-HH.MM.SS
+                for item in path_obj.iterdir():
+                    if item.is_dir():
+                        # Pattern: benchmark_2025.09.18-23.06.19
+                        match = re.match(rf'{test_name}_(\d{{4}})\.(\d{{2}})\.(\d{{2}})-(\d{{2}})\.(\d{{2}})\.(\d{{2}})', item.name)
+                        if match:
+                            year, month, day, hour, minute, second = match.groups()
+                            try:
+                                dt = datetime(int(year), int(month), int(day),
+                                            int(hour), int(minute), int(second))
+                                return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+                            except ValueError as e:
+                                logger.warning(f"Invalid timestamp in directory name {item.name}: {e}")
+        
+        # Fallback: try to get timestamp from result ZIP file modification time
+        result_zip = self.result_dir / f"results_{test_name}.zip"
+        if result_zip.exists():
+            mtime = result_zip.stat().st_mtime
+            dt = datetime.fromtimestamp(mtime)
+            logger.debug(f"Using ZIP file modification time as test timestamp: {dt}")
+            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        logger.warning("Could not extract test timestamp from results")
+        return None
+    
+    def _parse_directory_structure(self) -> Dict[str, Any]:
+        """
+        Parse directory structure to extract source metadata.
+        
+        Expected structure: .../scenario_name/os_vendor/cloud_provider/instance_identifier/
+        Examples:
+          - production_data/az_rhel_10_ga/rhel/azure/Standard_D8ds_v6_1/
+          - quick_sample_data/rhel/local/localhost_0/
+        
+        Returns dict with: os_vendor, cloud_provider, instance_type, iteration, scenario_name
+        """
+        import re
+        
+        result = {
+            "os_vendor": None,
+            "cloud_provider": None,
+            "instance_type": None,
+            "iteration": None,
+            "scenario_name": None
+        }
+        
+        # Get path parts relative to result directory
+        parts = self.result_dir.parts
+        
+        # Need at least 3 parts: scenario/os_vendor/cloud_provider/instance
+        if len(parts) < 3:
+            logger.warning(f"Directory structure too short to parse: {self.result_dir}")
+            return result
+        
+        # The instance identifier is the last part (e.g., Standard_D8ds_v6_1 or localhost_0)
+        instance_full = parts[-1]
+        
+        # Parse iteration from instance name (e.g., Standard_D8ds_v6_1 -> iteration=1)
+        # Match pattern: anything ending with _<number>
+        iteration_match = re.search(r'_(\d+)$', instance_full)
+        if iteration_match:
+            result["iteration"] = int(iteration_match.group(1))
+            # Instance type is everything before the iteration number
+            result["instance_type"] = instance_full[:iteration_match.start()]
+        else:
+            result["instance_type"] = instance_full
+        
+        # Cloud provider is second-to-last (e.g., azure, local, aws, gcp)
+        if len(parts) >= 2:
+            result["cloud_provider"] = parts[-2]
+        
+        # OS vendor is third-to-last (e.g., rhel, ubuntu, fedora)
+        if len(parts) >= 3:
+            result["os_vendor"] = parts[-3]
+        
+        # Scenario name is fourth-to-last (e.g., az_rhel_10_ga)
+        if len(parts) >= 4:
+            result["scenario_name"] = parts[-4]
+        
+        logger.debug(f"Parsed directory structure: {result}")
+        return result
     
     def cleanup(self):
         """Clean up temporary files"""
