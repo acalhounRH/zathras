@@ -4,253 +4,120 @@ Export Zathras benchmark results to OpenSearch or Horreum for centralized analys
 
 ---
 
-## 🚀 How to Run
+## How to Run
 
-### **After a Zathras Benchmark**
+Process entire result directories automatically:
 
-You have a result directory with your benchmark data:
-```
-/path/to/results/localhost_0/
-├── results_coremark.zip      # Your benchmark results
-├── sysconfig_info.tar        # System information
-├── ansible_vars.yml          # Test configuration
-└── test_info                 # Test metadata
-```
-
-**Export to OpenSearch in 3 lines:**
-
-```python
-from post_processing.processors.coremark_processor import CoreMarkProcessor
-from post_processing.exporters.opensearch_exporter import OpenSearchExporter
-
-# 1. Process results
-processor = CoreMarkProcessor("/path/to/results/localhost_0")
-document = processor.process()
-
-# 2. Configure exporter
-exporter = OpenSearchExporter(
-    url="https://opensearch.app.intlab.redhat.com/",
-    index="zathras-results",
-    username="example-user",
-    password="your-password"
-)
-
-# 3. Export
-doc_id = exporter.export_zathras_document(document)
-print(f"✅ Exported! View at: {exporter.url}/{exporter.index}/_doc/{doc_id}")
-```
-
-**Using the test script:**
 ```bash
-# Quick test with sample data
-cd /path/to/zathras
-python3 post_processing/tests/export_to_opensearch.py --yes
+# 1. Configure credentials
+cp post_processing/config/export_config_example.yml post_processing/config/export_config.yml
+vim post_processing/config/export_config.yml  # Add your credentials
 
-# Verify it's in OpenSearch
-python3 post_processing/tests/verify_opensearch.py
+# 2. Process and export everything
+python3 -m post_processing.run_postprocessing \
+    --input /path/to/results \
+    --config post_processing/config/export_config.yml \
+    --opensearch
+
+# Or just generate JSON files
+python3 -m post_processing.run_postprocessing \
+    --input /path/to/results \
+    --output-json /tmp/json_output
+```
+
+**What it does:**
+- Recursively discovers all result directories
+- Auto-detects benchmark types (coremark, streams, pyperf, etc.)
+- Batch processes all results
+- Exports to OpenSearch/Horreum or saves JSON
+- Provides detailed summary report
+
+**Example output:**
+```
+2025-11-06 21:00:31 - Searching for results in: production_data
+2025-11-06 21:00:31 - Found 34 result directory(ies)
+2025-11-06 21:00:34 - Processing coremark: results_coremark.zip
+  [SUCCESS] Parsed coremark: coremark_Standard_D128ds_v6_2_20251107_020034
+  [EXPORT] Exported to OpenSearch (summary): coremark_Standard_D128ds_v6_2_20251107_020034
+
+======================================================================
+PROCESSING SUMMARY
+======================================================================
+Total: 109 files
+Successful: 78 benchmarks
+Skipped: 31 (unknown types)
+Duration: 109.38 seconds
+
+Tests Processed:
+  - coremark: 12
+  - streams: 11
+  - pyperf: 6 (34,080 time series points)
+  - specjbb: 11
+  - And more...
 ```
 
 ---
 
-## 🔄 CI/CD Integration with Burden
+## CI/CD Integration with Burden
 
-### **Automatic Export After Every Benchmark Run**
+### Automatic Export After Every Benchmark Run
 
-Add post-processing to your existing Zathras workflows:
-
-#### **Option 1: Shell Script Wrapper**
+Modify the `burden` script to automatically export results after test completion:
 
 ```bash
-#!/bin/bash
-# run_and_export.sh - Wrap your existing burden commands
+# Add to burden script after test execution completes
+# Around line where results are finalized (e.g., after archiving)
 
-# Your existing Zathras run
-./bin/burden \
-    --scenario benchmarks/coremark.yml \
-    --host-config my-systems \
-    --run-label "nightly-$(date +%Y%m%d)"
-
-# Get the result directory
-RESULT_DIR=$(ls -td */rhel/*/localhost_* | head -1)
-
-# Export results automatically
-python3 << EOF
-from post_processing.processors.coremark_processor import CoreMarkProcessor
-from post_processing.exporters.opensearch_exporter import OpenSearchExporter
-import os
-
-processor = CoreMarkProcessor("$RESULT_DIR")
-document = processor.process()
-
-exporter = OpenSearchExporter(
-    url=os.getenv("OPENSEARCH_URL", "https://opensearch.app.intlab.redhat.com/"),
-    index="zathras-results",
-    username=os.getenv("OPENSEARCH_USER", "example-user"),
-    password=os.getenv("OPENSEARCH_PASSWORD")
-)
-
-doc_id = exporter.export_zathras_document(document)
-print(f"✅ Exported to OpenSearch: {doc_id}")
-EOF
+if [ -f "post_processing/config/export_config.yml" ]; then
+    echo "Exporting results to OpenSearch..."
+    python3 -m post_processing.run_postprocessing \
+        --input "${RESULT_DIR}" \
+        --config post_processing/config/export_config.yml \
+        --opensearch || {
+        echo "WARNING: Post-processing export failed, but continuing..."
+    }
+else
+    echo "INFO: No export config found, skipping post-processing export"
+fi
 ```
 
-**Usage:**
+**Benefits:**
+- Zero manual intervention
+- Results exported immediately after completion
+- Fails gracefully if config missing
+- Works with all burden scenarios
+- Automatic for all team members
+
+**Location in burden script:**
+- Add after result archiving (near `tar` operations)
+- Before final status reporting
+- Ensure `RESULT_DIR` variable points to the top-level result directory
+
+**One-time setup:**
 ```bash
-# Set credentials once
-export OPENSEARCH_PASSWORD="your-password"
-
-# Run your tests as normal
-./run_and_export.sh
-```
-
-#### **Option 2: Post-Process Existing Results**
-
-Already have results? Process them all at once:
-
-```bash
-#!/bin/bash
-# bulk_export.sh - Export all existing results
-
-RESULTS_BASE="my_results_20251106/rhel/local"
-
-for result_dir in $RESULTS_BASE/localhost_*; do
-    echo "Processing: $result_dir"
-    
-    python3 << EOF
-from post_processing.processors.coremark_processor import CoreMarkProcessor
-from post_processing.exporters.opensearch_exporter import OpenSearchExporter
-
-try:
-    processor = CoreMarkProcessor("$result_dir")
-    document = processor.process()
-    
-    exporter = OpenSearchExporter(
-        url="https://opensearch.app.intlab.redhat.com/",
-        index="zathras-results",
-        username="example-user",
-        password="$OPENSEARCH_PASSWORD"
-    )
-    
-    doc_id = exporter.export_zathras_document(document)
-    print(f"✅ $result_dir: {doc_id}")
-except Exception as e:
-    print(f"❌ $result_dir: {e}")
-EOF
-done
-```
-
-#### **Option 3: Jenkins/GitLab CI Pipeline**
-
-```yaml
-# .gitlab-ci.yml
-stages:
-  - test
-  - export
-
-run_benchmarks:
-  stage: test
-  script:
-    - ./bin/burden --scenario benchmarks/coremark.yml --result-dir results/
-  artifacts:
-    paths:
-      - results/
-    expire_in: 30 days
-
-export_results:
-  stage: export
-  dependencies:
-    - run_benchmarks
-  script:
-    - |
-      for result_dir in results/*/rhel/*/localhost_*; do
-        python3 << EOF
-      from post_processing.processors.coremark_processor import CoreMarkProcessor
-      from post_processing.exporters.opensearch_exporter import OpenSearchExporter
-      import os
-      
-      processor = CoreMarkProcessor("$result_dir")
-      document = processor.process()
-      
-      exporter = OpenSearchExporter(
-          url=os.getenv("OPENSEARCH_URL"),
-          index="zathras-ci-${CI_PROJECT_NAME}",
-          username=os.getenv("OPENSEARCH_USER"),
-          password=os.getenv("OPENSEARCH_PASSWORD")
-      )
-      
-      exporter.export_zathras_document(document)
-      EOF
-      done
-  only:
-    - main
-    - schedules
-```
-
-#### **Option 4: Cron Job for Nightly Runs**
-
-```bash
-# /etc/cron.d/zathras-nightly
-# Run nightly benchmarks and export results
-
-0 2 * * * zathras /path/to/nightly_benchmark.sh >> /var/log/zathras-nightly.log 2>&1
-```
-
-```bash
-#!/bin/bash
-# nightly_benchmark.sh
-
-export OPENSEARCH_PASSWORD="your-password"
-
-# Run benchmark
-./bin/burden \
-    --scenario benchmarks/nightly.yml \
-    --run-label "nightly-$(date +%Y%m%d)"
-
-# Export results
-RESULT_DIR=$(ls -td */rhel/*/localhost_* | head -1)
-
-python3 -c "
-from post_processing.processors.coremark_processor import CoreMarkProcessor
-from post_processing.exporters.opensearch_exporter import OpenSearchExporter
-import os
-
-processor = CoreMarkProcessor('$RESULT_DIR')
-document = processor.process()
-
-exporter = OpenSearchExporter(
-    url='https://opensearch.app.intlab.redhat.com/',
-    index='zathras-nightly',
-    username='example-user',
-    password=os.getenv('OPENSEARCH_PASSWORD')
-)
-
-doc_id = exporter.export_zathras_document(document)
-print(f'✅ Nightly export complete: {doc_id}')
-"
-
-# Optional: Send notification
-curl -X POST "$SLACK_WEBHOOK" \
-    -d '{"text": "Nightly benchmarks complete and exported to OpenSearch"}'
+# Create config file (once per system/CI environment)
+cp post_processing/config/export_config_example.yml post_processing/config/export_config.yml
+vim post_processing/config/export_config.yml  # Add your credentials
 ```
 
 ---
 
-## 📊 View Your Results
+## View Your Results
 
-### **OpenSearch Dashboards**
+### OpenSearch Dashboards
 
 Access your exported data:
 - **Discover:** https://opensearch.app.intlab.redhat.com/_dashboards/app/discover
 - **Dev Tools:** https://opensearch.app.intlab.redhat.com/_dashboards/app/dev_tools
 
-### **Quick Queries**
+### Quick Queries
 
 ```json
 # Get latest results
 GET /zathras-results/_search
 {
   "size": 10,
-  "sort": [{ "metadata.collection_timestamp": "desc" }]
+  "sort": [{ "metadata.test_timestamp": "desc" }]
 }
 
 # Find CoreMark results
@@ -259,12 +126,26 @@ GET /zathras-results/_search
   "query": { "term": { "test.name": "coremark" }}
 }
 
-# Performance over time
+# Performance over time (summary data)
 GET /zathras-results/_search
 {
   "query": { "term": { "test.name": "coremark" }},
-  "sort": [{ "metadata.collection_timestamp": "asc" }],
-  "_source": ["metadata.collection_timestamp", "results.primary_metric"]
+  "sort": [{ "metadata.test_timestamp": "asc" }],
+  "_source": ["metadata.test_timestamp", "results.runs.run_0.mean"]
+}
+
+# Get time series data points
+GET /zathras-timeseries/_search
+{
+  "query": { 
+    "bool": {
+      "must": [
+        { "term": { "test.name": "pyperf" }},
+        { "term": { "results.run.benchmark_name": "2to3" }}
+      ]
+    }
+  },
+  "sort": [{ "metadata.sequence": "asc" }]
 }
 
 # Compare by CPU architecture
@@ -273,9 +154,9 @@ GET /zathras-results/_search
   "size": 0,
   "aggs": {
     "by_arch": {
-      "terms": { "field": "system_under_test.hardware.cpu.architecture" },
+      "terms": { "field": "system_under_test.hardware.cpu.architecture.keyword" },
       "aggs": {
-        "avg_performance": { "avg": { "field": "results.primary_metric.value" }}
+        "avg_performance": { "avg": { "field": "results.runs.run_0.mean" }}
       }
     }
   }
@@ -284,14 +165,14 @@ GET /zathras-results/_search
 
 ---
 
-## 🔧 Installation & Setup
+## Installation & Setup
 
-### **Prerequisites**
+### Prerequisites
 - Python 3.8+
 - Zathras benchmark results
 - OpenSearch or Horreum access (optional for local testing)
 
-### **Install Dependencies**
+### Install Dependencies
 
 ```bash
 cd /path/to/zathras
@@ -303,23 +184,13 @@ pip3 install -r post_processing/requirements.txt
 - `python-dateutil` - Timestamp handling
 - `requests` - HTTP for Horreum
 
-### **Configuration**
+### Configuration
 
-#### **Environment Variables (Recommended)**
-
-```bash
-# Add to ~/.bashrc or CI environment
-export OPENSEARCH_URL="https://opensearch.app.intlab.redhat.com/"
-export OPENSEARCH_USER="example-user"
-export OPENSEARCH_PASSWORD="your-password"
-export OPENSEARCH_INDEX="zathras-results"
-```
-
-#### **Configuration File**
+Create your configuration file:
 
 ```bash
 # Copy example
-cp post_processing/config/export_config.example.yml post_processing/config/export_config.yml
+cp post_processing/config/export_config_example.yml post_processing/config/export_config.yml
 
 # Edit with your settings
 vim post_processing/config/export_config.yml
@@ -328,112 +199,115 @@ vim post_processing/config/export_config.yml
 Example config:
 ```yaml
 opensearch:
-  enabled: true
-  url: "https://opensearch.app.intlab.redhat.com/"
-  index: "zathras-results"
+  url: "https://opensearch.app.intlab.redhat.com"
+  summary_index: "zathras-results"        # Summary documents
+  timeseries_index: "zathras-timeseries"  # Individual time series points
   username: "example-user"
-  password: "${OPENSEARCH_PASSWORD}"  # Use env var
-  verify_ssl: true
+  password: "your-password"
+  verify_ssl: false  # Set to true for production
+
+horreum:
+  url: "http://localhost:8080"
+  username: "your-horreum-username"
+  password: "your-horreum-password"
+  test_name: "Zathras Benchmarks"
+
+processing:
+  batch_size: 500
+  continue_on_error: true
+  verbose: false
 ```
 
 ---
 
-## 📖 Detailed Usage
+## Detailed Usage
 
-### **Supported Benchmarks**
+### Benchmark Support Status
 
-| Benchmark | Status | Processor |
-|-----------|--------|-----------|
-| CoreMark | ✅ Ready | `coremark_processor.py` |
-| STREAMS | 🚧 Coming | Phase 4 |
-| FIO | 🚧 Coming | Phase 4 |
-| Pig | 🚧 Coming | Phase 4 |
+| Benchmark | Post-Processing Support | Processor | Notes |
+|-----------|------------------------|-----------|-------|
+| CoreMark | Supported | `coremark_processor.py` | Single-thread CPU performance |
+| CoreMark Pro | Supported | `coremark_pro_processor.py` | 9 workload types |
+| Passmark | Supported | `passmark_processor.py` | CPU & Memory marks |
+| Phoronix Test Suite | Supported | `phoronix_processor.py` | 51 sub-tests (BOPs) |
+| PyPerf | Supported | `pyperf_processor.py` | 90 Python benchmarks, 5,680 time series points |
+| SpecJBB | Supported | `specjbb_processor.py` | Java business benchmark (Critical/Max-jOPS) |
+| STREAM | Supported | `streams_processor.py` | Memory bandwidth (Copy, Scale, Add, Triad) |
+| Uperf | Supported | `uperf_processor.py` | Network performance (IOPS, latency, throughput) |
+| FIO | Not Supported | - | Flexible I/O tester |
+| HammerDB | Not Supported | - | Database benchmarking (MariaDB, PostgreSQL) |
+| HPL (autohpl) | Not Supported | - | High Performance Computing Linpack |
+| IOzone | Not Supported | - | File system benchmarking |
+| Linpack | Not Supported | - | Licensed Linpack benchmark |
+| NUMA STREAM | Not Supported | - | NUMA memory bandwidth extension |
+| pig | Not Supported | - | Processor scheduler efficiency |
+| SPEC CPU 2017 | Not Supported | - | Compute-intensive performance suite |
 
-### **Process Results Programmatically**
+**8 of 16 benchmarks supported** | **35,000+ time series points per production run**
 
-```python
-from post_processing.processors.coremark_processor import CoreMarkProcessor
+---
 
-# Process results
-processor = CoreMarkProcessor("/path/to/result/directory/")
-document = processor.process()
+## What Gets Extracted
 
-# Inspect the document
-print(f"Test: {document.test.name} v{document.test.version}")
-print(f"Status: {document.results.status}")
-print(f"Runs: {len(document.results.runs)}")
+The post-processing pipeline automatically extracts and structures data from Zathras result files:
 
-# Access run data
-for run_key, run in document.results.runs.items():
-    print(f"{run_key}: {run.status}")
-    if run.timeseries:
-        print(f"  Time series points: {len(run.timeseries)}")
+### Benchmark Results (`results_*.zip`)
+- **Performance metrics**: Mean, median, min, max, standard deviation for each run
+- **Time series data**: Individual data points with sequence ordering (for benchmarks like PyPerf)
+- **Configuration details**: Test-specific settings and parameters
+- **Execution metadata**: Start time, duration, status (PASS/FAIL)
+- **Validation data**: Checksums, compiler information
 
-# Convert to JSON
-import json
-doc_dict = document.to_dict()
-json_str = json.dumps(doc_dict, indent=2, default=str)
-print(f"Document size: {len(json_str)} bytes")
+### System Configuration (`sysconfig_info.tar`)
+**Hardware:**
+- **CPU**: Vendor, model, architecture, cores, threads, cache sizes, CPU flags (as boolean objects)
+- **Memory**: Total capacity, speed, NUMA topology (node-based objects)
+- **Storage**: Devices, capacity, types, mount points
+- **Network**: Interfaces, speeds, addresses
 
-# Save to file
-with open('result.json', 'w') as f:
-    f.write(json_str)
-```
+**Operating System:**
+- Distribution, version, kernel version
+- Tuned profile settings
+- Sysctl parameters
+- SELinux configuration
 
-### **What Gets Extracted**
-
-The processor extracts comprehensive data from your results:
-
-**From `results_coremark.zip`:**
-- Per-run metrics (iterations/sec, total time, etc.)
-- Time series data (performance over time)
-- Compiler information
-- Validation checksums
-
-**From `sysconfig_info.tar`:**
-- CPU: vendor, model, cores, threads, cache, flags
-- Memory: capacity, speed, NUMA topology
-- Storage: devices, capacity, type
-- Network: interfaces, speed, addresses
-- OS: distribution, version, kernel
-
-**From `ansible_vars.yml`:**
-- Test parameters and iterations
-- System configuration (tuned profile, sysctl)
+### Test Configuration (`ansible_vars.yml`)
+- Test parameters and iteration counts
+- System tuning settings applied during test
 - Zathras scenario information
 
+### Directory Metadata (from path structure)
+Automatically parsed from result directory paths:
+- **OS Vendor**: e.g., `rhel`, `ubuntu`, `fedora`
+- **Cloud Provider**: e.g., `azure`, `aws`, `gcp`, `local`
+- **Instance Type**: e.g., `Standard_D8ds_v6`, `m5.xlarge`
+- **Iteration Number**: e.g., `0`, `1`, `2`
+- **Scenario Name**: e.g., `az_rhel_10_ga`
+
+Example directory structure: `production_data/az_rhel_10_ga/rhel/azure/Standard_D8ds_v6_1/`
+
 ---
 
-## 🚢 Export to Different Targets
+## Export to Different Targets
 
-### **OpenSearch**
+### OpenSearch (Two-Index Architecture)
 
-```python
-from post_processing.exporters.opensearch_exporter import OpenSearchExporter
+Zathras uses **two OpenSearch indices** to handle high-volume time series data:
 
-exporter = OpenSearchExporter(
-    url="https://opensearch.app.intlab.redhat.com/",
-    index="zathras-results",
-    username="example-user",
-    password="your-password",
-    verify_ssl=True,
-    timeout=30,
-    max_retries=3
-)
+1. **`zathras-results`** - Summary documents with aggregated statistics (mean, median, stdev, etc.)
+2. **`zathras-timeseries`** - Individual time series data points (one document per point)
 
-# Test connection
-if exporter.test_connection():
-    print("✅ Connected!")
+**Why two indices?** Benchmarks like PyPerf generate 5,680+ time series points per test, exceeding OpenSearch's 5,000 field limit for a single document. The two-index approach keeps summaries queryable while preserving full time series data.
 
-# Ensure index exists
-exporter.ensure_index_exists()
-
-# Export document
-doc_id = exporter.export_zathras_document(document)
-print(f"Document ID: {doc_id}")
+```bash
+# Automatically handles both indices
+python3 -m post_processing.run_postprocessing \
+    --input /path/to/results \
+    --config post_processing/config/export_config.yml \
+    --opensearch
 ```
 
-### **Horreum**
+### Horreum
 
 ```python
 from post_processing.exporters.horreum_exporter import HorreumExporter
@@ -453,173 +327,137 @@ print(f"Run ID: {run_id}")
 
 ---
 
-## 📐 Schema & Data Structure
+## Schema & Data Structure
 
-### **Object-Based Design**
+### Two-Index Architecture
 
-The schema uses an **object-based structure** optimized for OpenSearch:
+Zathras uses two separate OpenSearch indices to efficiently handle benchmarks with large time series datasets:
 
-**✅ Runs as Objects** (not arrays):
-```json
-"results": {
-  "runs": {
-    "run_1": { "metrics": {...}, "timeseries": {...} },
-    "run_2": { "metrics": {...}, "timeseries": {...} }
-  }
-}
-```
+**1. `zathras-results` - Summary Documents**
 
-**✅ Timestamp-Keyed Time Series**:
-```json
-"timeseries": {
-  "2025-11-06T12:00:00.000Z": {
-    "sequence": 0,
-    "metrics": { "iterations_per_second": 193245.2 }
-  },
-  "2025-11-06T12:00:05.000Z": {
-    "sequence": 1,
-    "metrics": { "iterations_per_second": 195999.8 }
-  }
-}
-```
-
-**✅ CPU Flags as Boolean Object**:
-```json
-"cpu": {
-  "flags": {
-    "avx2": true,
-    "avx512": true,
-    "sse4_2": true
-  }
-}
-```
-
-**✅ Dynamic Keys for Hardware**:
-```json
-"numa": {
-  "node_0": { "cpus": "0-23", "memory_gb": 64 },
-  "node_1": { "cpus": "24-47", "memory_gb": 64 }
-}
-```
-
-### **Why This Design?**
-
-- **No nested arrays** → Better OpenSearch performance
-- **Object-based** → Fast queries and aggregations
-- **Timestamp keys** → Preserves order without sorting
-- **Boolean flags** → Efficient filtering
-- **Dynamic keys** → Flexible for varying hardware configs
-
----
-
-## 🧪 Testing
-
-### **Test With Sample Data**
-
-```bash
-# Run all tests
-python3 post_processing/tests/test_coremark_processor.py
-python3 post_processing/tests/test_exporters.py
-python3 post_processing/tests/test_export_logic.py
-
-# Test real OpenSearch connection
-python3 post_processing/tests/test_real_opensearch.py
-
-# Export sample data
-python3 post_processing/tests/export_to_opensearch.py --yes
-
-# Verify in OpenSearch
-python3 post_processing/tests/verify_opensearch.py
-```
-
-Expected output:
-```
-✅ Index 'zathras-results' exists
-✅ Total documents: 1
-✅ Runs are objects: ['run_1', 'run_2']
-✅ Timeseries are timestamp-keyed objects
-✅ CPU flags are boolean object
-✅ Document validation passed
-```
-
----
-
-## 🐛 Troubleshooting
-
-### **Connection Issues**
-
-```python
-# Test OpenSearch connection
-from post_processing.exporters.opensearch_exporter import OpenSearchExporter
-
-exporter = OpenSearchExporter(
-    url="https://opensearch.app.intlab.redhat.com/",
-    index="test",
-    username="example-user",
-    password="your-password"
-)
-
-if exporter.test_connection():
-    print("✅ Connected!")
-else:
-    print("❌ Connection failed")
-    print("Check: VPN, credentials, firewall")
-```
-
-### **Permission Errors**
-
-**Required roles in OpenSearch:**
-- ✅ `own_index` - Create indices and write documents
-- ✅ `readall_and_monitor` - Read data
-
-**Not required:**
-- ❌ Admin access (for index templates)
-
-### **File Not Found Errors**
-
-```bash
-# Verify result directory structure
-ls -la /path/to/results/
-
-# Required files:
-# - results_coremark.zip
-# - sysconfig_info.tar
-# - ansible_vars.yml
-```
-
-### **Import Errors**
-
-```bash
-# Ensure you're in the Zathras root directory
-cd /path/to/zathras
-
-# Test import
-python3 -c "from post_processing.processors.coremark_processor import CoreMarkProcessor; print('✅ Import works')"
-```
-
-### **OpenSearch Aggregation Errors**
-
-**Error:** "Text fields are not optimised for aggregations"
-
-**Solution:** Dynamic mappings may map fields as `text`. Use `.keyword` suffix:
+Contains aggregated statistics for each benchmark execution:
 
 ```json
 {
-  "aggs": {
-    "by_status": {
-      "terms": { "field": "results.status.keyword" }
+  "metadata": {
+    "document_id": "coremark_Standard_D8ds_v6_1_20251106",
+    "test_timestamp": "2025-11-06T12:00:00Z",
+    "processing_timestamp": "2025-11-06T12:05:00Z",
+    "os_vendor": "rhel",
+    "cloud_provider": "azure",
+    "instance_type": "Standard_D8ds_v6",
+    "iteration": 1,
+    "scenario_name": "az_rhel_10_ga"
+  },
+  "test": {
+    "name": "coremark",
+    "version": "1.0"
+  },
+  "system_under_test": {
+    "hardware": {
+      "cpu": {
+        "vendor": "Intel",
+        "model": "Xeon Platinum 8370C",
+        "architecture": "x86_64",
+        "cores": 8,
+        "threads": 16,
+        "flags": { "avx2": true, "avx512": true, "sse4_2": true }
+      },
+      "memory": {
+        "total_gb": 32,
+        "speed_mhz": 3200
+      }
+    },
+    "os": {
+      "vendor": "rhel",
+      "version": "10.0",
+      "kernel": "6.11.0-0.rc5.20240828git6a0e38f.45.el10.x86_64"
+    }
+  },
+  "results": {
+    "runs": {
+      "run_0": {
+        "status": "PASS",
+        "mean": 193245.2,
+        "median": 193500.0,
+        "stdev": 1234.5,
+        "min": 191000.0,
+        "max": 195000.0
+      }
     }
   }
 }
 ```
 
-Or have an admin apply the index template for optimized mappings.
+**2. `zathras-timeseries` - Individual Time Series Points**
+
+Stores each time series data point as a separate, fully denormalized document:
+
+```json
+{
+  "metadata": {
+    "document_id": "pyperf_Standard_D8ds_v6_1_20251106",
+    "timeseries_id": "pyperf_Standard_D8ds_v6_1_20251106_run0_2to3_seq0",
+    "timestamp": "2025-11-06T12:00:00Z",
+    "sequence": 0,
+    "test_timestamp": "2025-11-06T12:00:00Z",
+    "processing_timestamp": "2025-11-06T12:05:00Z",
+    "os_vendor": "rhel",
+    "cloud_provider": "azure",
+    "instance_type": "Standard_D8ds_v6",
+    "iteration": 1
+  },
+  "test": {
+    "name": "pyperf",
+    "version": "1.0"
+  },
+  "system_under_test": {
+    /* Full SUT details included */
+  },
+  "results": {
+    "run": {
+      "run_key": "run_0",
+      "run_number": 0,
+      "status": "PASS",
+      "benchmark_name": "2to3"
+    },
+    "value": 1.23,
+    "unit": "seconds"
+  }
+}
+```
+
+### Design Principles
+
+**Fully Denormalized**
+- Each document contains complete context (test, SUT, configuration)
+- No joins required for querying
+- Optimized for document-oriented datastores
+
+**Object-Based Structure**
+- Dynamic keys like `run_0`, `node_0`, `device_0` instead of arrays
+- Better OpenSearch performance for aggregations
+- Avoids nested object limitations
+
+**Hierarchical Metadata**
+- Structured extraction from directory paths
+- Consistent field naming across indices
+- Enables filtering by cloud provider, instance type, iteration
+
+**Dual Timestamps**
+- `test_timestamp`: When the benchmark was executed
+- `processing_timestamp`: When the JSON document was created
+- Enables tracking of both test execution and data pipeline timing
+
+**Boolean CPU Flags**
+- CPU features represented as objects: `{"avx2": true, "avx512": false}`
+- Efficient term queries for hardware capability filtering
 
 ---
 
-## 🔍 Advanced Queries
+## Advanced Queries
 
-### **Performance Regression Detection**
+### Performance Regression Detection
 
 ```json
 GET /zathras-results/_search
@@ -628,16 +466,16 @@ GET /zathras-results/_search
     "bool": {
       "must": [
         { "term": { "test.name": "coremark" }},
-        { "range": { "metadata.collection_timestamp": { "gte": "now-7d" }}}
+        { "range": { "metadata.test_timestamp": { "gte": "now-7d" }}}
       ]
     }
   },
-  "sort": [{ "metadata.collection_timestamp": "asc" }],
-  "_source": ["metadata.collection_timestamp", "results.primary_metric"]
+  "sort": [{ "metadata.test_timestamp": "asc" }],
+  "_source": ["metadata.test_timestamp", "results.runs.run_0.mean", "metadata.instance_type"]
 }
 ```
 
-### **Hardware Comparison**
+### Hardware Comparison
 
 ```json
 GET /zathras-results/_search
@@ -647,15 +485,15 @@ GET /zathras-results/_search
     "by_cpu_model": {
       "terms": { "field": "system_under_test.hardware.cpu.model.keyword", "size": 10 },
       "aggs": {
-        "avg_performance": { "avg": { "field": "results.primary_metric.value" }},
-        "max_performance": { "max": { "field": "results.primary_metric.value" }}
+        "avg_performance": { "avg": { "field": "results.runs.run_0.mean" }},
+        "max_performance": { "max": { "field": "results.runs.run_0.max" }}
       }
     }
   }
 }
 ```
 
-### **Find Systems with Specific Features**
+### Find Systems with Specific Features
 
 ```json
 # Systems with AVX-512 and more than 64 cores
@@ -668,80 +506,62 @@ GET /zathras-results/_search
         { "range": { "system_under_test.hardware.cpu.cores": { "gt": 64 }}}
       ]
     }
+  },
+  "_source": ["system_under_test.hardware.cpu", "metadata.instance_type", "results.runs.run_0.mean"]
+}
+```
+
+### Time Series Analysis
+
+```json
+# Get all time series points for a specific benchmark run
+GET /zathras-timeseries/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        { "term": { "metadata.document_id": "pyperf_Standard_D8ds_v6_1_20251107" }},
+        { "term": { "results.run.benchmark_name": "2to3" }}
+      ]
+    }
+  },
+  "sort": [{ "metadata.sequence": "asc" }],
+  "size": 100
+}
+
+# Aggregate time series data
+GET /zathras-timeseries/_search
+{
+  "query": { "term": { "test.name": "pyperf" }},
+  "aggs": {
+    "by_benchmark": {
+      "terms": { "field": "results.run.benchmark_name.keyword" },
+      "aggs": {
+        "avg_value": { "avg": { "field": "results.value" }},
+        "min_value": { "min": { "field": "results.value" }},
+        "max_value": { "max": { "field": "results.value" }}
+      }
+    }
   }
 }
 ```
 
-### **Time Series Analysis**
-
-```json
-# Get time series data for specific run
-GET /zathras-results/_doc/coremark_host1_20251106_120000
-{
-  "_source": ["results.runs.run_1.timeseries"]
-}
-```
-
 ---
 
-## 📚 Additional Resources
+## Additional Resources
 
-### **Documentation**
+### Documentation
 - [Schema Analysis](DATA_ANALYSIS.md) - Detailed schema documentation
 - [Implementation Plan](IMPLEMENTATION_TODO.md) - Development roadmap
 - [Index Template](config/opensearch_index_template.json) - OpenSearch mappings
 
-### **Zathras Documentation**
+### Zathras Documentation
 - [Main README](../README.md)
 - [Testing Quickstart](../docs/testing_quickstart.md)
 - [Command Line Reference](../docs/command_line_reference.md)
 
-### **External Resources**
+### External Resources
 - [OpenSearch Query DSL](https://opensearch.org/docs/latest/query-dsl/)
 - [OpenSearch Aggregations](https://opensearch.org/docs/latest/aggregations/)
 - [Horreum Documentation](https://horreum.hyperfoil.io/)
 
----
-
-## 🤝 Contributing
-
-### **Adding New Benchmark Processors**
-
-1. Create a new processor in `processors/`
-2. Inherit from `BaseProcessor`
-3. Implement `get_test_name()` and `parse_runs()`
-4. Add tests
-
-Example:
-```python
-from .base_processor import BaseProcessor
-
-class MyBenchmarkProcessor(BaseProcessor):
-    def get_test_name(self) -> str:
-        return "mybenchmark"
-    
-    def parse_runs(self, extracted_result) -> dict:
-        runs = {}
-        # Your parsing logic here
-        # Return object-based structure: {"run_1": {...}, "run_2": {...}}
-        return runs
-```
-
----
-
-## ✨ Summary
-
-**Zathras Post-Processing:**
-- ✅ Converts benchmark results to structured JSON
-- ✅ Exports to OpenSearch or Horreum
-- ✅ Integrates with existing burden workflows
-- ✅ CI/CD ready
-- ✅ Time-series data preserved
-- ✅ Comprehensive system metadata
-
-**Get started in 3 steps:**
-1. Run your Zathras benchmark (no changes needed)
-2. Process results with `CoreMarkProcessor`
-3. Export with `OpenSearchExporter`
-
-**Questions?** See the [main Zathras repository](../) or [troubleshooting section](#-troubleshooting).
