@@ -133,8 +133,14 @@ class OpenSearchExporter:
                     method=method
                 )
                 
+                # Create SSL context if needed
+                import ssl
+                context = None
+                if not self.verify_ssl and url.startswith('https'):
+                    context = ssl._create_unverified_context()
+                
                 # Make request
-                with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                with urllib.request.urlopen(req, timeout=self.timeout, context=context) as response:
                     response_data = json.loads(response.read().decode('utf-8'))
                     self.logger.debug(f"Request to {endpoint} succeeded")
                     return response_data
@@ -296,7 +302,7 @@ class OpenSearchExporter:
         
         return self.export_document(doc_dict, doc_id=doc_id)
     
-    def export_document(self, document: Dict[str, Any], doc_id: Optional[str] = None) -> str:
+    def export_document(self, document: Dict[str, Any], doc_id: Optional[str] = None) -> Dict[str, str]:
         """
         Export a single document to OpenSearch.
         
@@ -305,7 +311,7 @@ class OpenSearchExporter:
             doc_id: Optional document ID (auto-generated if not provided)
             
         Returns:
-            Document ID of the indexed document
+            Dict with 'id' (document ID) and 'result' ('created' or 'updated')
             
         Raises:
             Exception: If export fails
@@ -331,8 +337,9 @@ class OpenSearchExporter:
         try:
             response = self._make_request(endpoint, method='POST', data=document)
             doc_id = response.get('_id')
-            self.logger.info(f"Exported document with ID: {doc_id}")
-            return doc_id
+            result = response.get('result', 'unknown')  # 'created' or 'updated'
+            self.logger.info(f"Exported document with ID: {doc_id} (result: {result})")
+            return {'id': doc_id, 'result': result}
         except Exception as e:
             self.logger.error(f"Failed to export document: {str(e)}")
             raise
@@ -433,6 +440,46 @@ class OpenSearchExporter:
         except Exception as e:
             self.logger.error(f"Delete by query failed: {str(e)}")
             raise
+    
+    def create_document(self, document: Dict[str, Any], doc_id: str) -> Dict[str, str]:
+        """
+        Create a new document in OpenSearch. Fails if document already exists.
+        
+        Args:
+            document: Document to create
+            doc_id: Document ID
+            
+        Returns:
+            Dict with 'id' (document ID) and 'result' ('created' or 'duplicate')
+            
+        Raises:
+            Exception: If creation fails for reasons other than duplicate
+        """
+        # Add export metadata
+        document['_export_metadata'] = {
+            'exported_at': datetime.utcnow().isoformat() + 'Z',
+            'exporter': 'zathras-opensearch-exporter',
+            'exporter_version': '1.0.0'
+        }
+        
+        # Use _create endpoint which fails on duplicates
+        endpoint = f'/{self.index}/_create/{doc_id}'
+        
+        try:
+            response = self._make_request(endpoint, method='PUT', data=document)
+            result = response.get('result', 'created')
+            self.logger.info(f"Created document with ID: {doc_id}")
+            return {'id': doc_id, 'result': result}
+        except Exception as e:
+            error_str = str(e)
+            # Check if this is a duplicate (version conflict)
+            if 'version_conflict_engine_exception' in error_str or '409' in error_str:
+                self.logger.info(f"Document already exists: {doc_id} (duplicate)")
+                return {'id': doc_id, 'result': 'duplicate'}
+            else:
+                # Other error - re-raise
+                self.logger.error(f"Failed to create document {doc_id}: {error_str}")
+                raise
     
     def search(self, query: Dict[str, Any], size: int = 100) -> Dict[str, Any]:
         """

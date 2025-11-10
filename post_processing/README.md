@@ -390,15 +390,7 @@ This is expected behavior representing genuinely different tests.
 
 ### Testing
 
-Verify deduplication works:
-
-```bash
-python3 post_processing/tests/test_deduplication_simple.py
-```
-
-Output shows that processing the same data multiple times generates identical hashes.
-
-For full documentation, see [`DEDUPLICATION.md`](DEDUPLICATION.md).
+Deduplication is built-in and automatic. To verify it's working, process the same results twice and query OpenSearch - you'll see only one document exists with an updated `processing_timestamp`.
 
 ---
 
