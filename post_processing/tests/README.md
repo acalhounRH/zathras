@@ -1,117 +1,98 @@
 # Post-Processing Tests
 
-Test scripts for validating the Zathras post-processing pipeline.
+This directory is for test scripts and validation. Test files are not included in the repository.
 
 ---
 
-## Available Tests
+## Test Recommendations
 
-### Deduplication Tests
+When developing or validating the post-processing pipeline, consider creating:
 
-**`test_deduplication_simple.py`**
-- **Purpose:** Unit test for content-based deduplication
-- **Requirements:** None (uses mock data)
-- **Runtime:** < 1 second
-- **Usage:**
-  ```bash
-  python3 post_processing/tests/test_deduplication_simple.py
-  ```
-- **What it tests:**
-  - Same content generates same hash
-  - Different content generates different hash
-  - Document IDs are properly generated
-  - Processing timestamp is excluded from hash
+### Unit Tests
+- Mock data tests for individual processors
+- Schema validation tests
+- Hash calculation and deduplication tests
 
-**`test_live_deduplication.py`**
-- **Purpose:** Integration test with real OpenSearch instance
-- **Requirements:** 
-  - OpenSearch credentials (environment variables or config file)
-  - Actual benchmark results (coremark or streams)
-- **Runtime:** ~5 seconds
-- **Usage:**
-  ```bash
-  export OPENSEARCH_URL='https://opensearch.app.intlab.redhat.com'
-  export OPENSEARCH_USER='your-username'
-  export OPENSEARCH_PASS='your-password'
-  
-  python3 post_processing/tests/test_live_deduplication.py
-  ```
-- **What it tests:**
-  - Processes same results twice
-  - Uploads both to OpenSearch
-  - Verifies only 1 document exists (no duplicate)
-  - Confirms processing_timestamp was updated
+### Integration Tests
+- OpenSearch export tests with real instance
+- Horreum export tests
+- End-to-end processing tests
 
 ---
 
-## Test Results
+## Example Test Structure
 
-All tests passing:
+**Deduplication Test:**
+```python
+# test_deduplication.py
+def test_same_content_same_hash():
+    """Verify identical test data generates same hash"""
+    doc1 = create_test_document()
+    doc2 = create_test_document()
+    assert doc1.calculate_content_hash() == doc2.calculate_content_hash()
+```
 
-✅ **test_deduplication_simple.py** (4/4 tests)
-- Same content → same hash
-- Different content → different hash
-- Document ID generation
-- Processing timestamp exclusion
+**Processor Test:**
+```python
+# test_coremark.py
+def test_coremark_processor():
+    """Test CoreMark result parsing"""
+    processor = CoreMarkProcessor("path/to/results")
+    document = processor.process()
+    assert document.test.name == "coremark"
+    assert document.results.status == "SUCCESS"
+```
 
-✅ **test_live_deduplication.py**
-- Live OpenSearch integration
-- Duplicate prevention verified
-- Document updates confirmed
+**OpenSearch Integration Test:**
+```python
+# test_opensearch_export.py
+def test_no_duplicates():
+    """Verify same results don't create duplicates"""
+    exporter = OpenSearchExporter(...)
+    
+    # Process and upload twice
+    doc1 = processor.process()
+    exporter.export_zathras_document(doc1)
+    
+    doc2 = processor.process()
+    exporter.export_zathras_document(doc2)
+    
+    # Query - should find only 1 document
+    results = exporter.search({"query": {"term": {"metadata.document_id": doc1.metadata.document_id}}})
+    assert results['hits']['total']['value'] == 1
+```
 
 ---
 
 ## Running Tests
 
-### Quick Check (No Dependencies)
+Add test files to `.gitignore` to keep them local:
 
 ```bash
-python3 post_processing/tests/test_deduplication_simple.py
+# In post_processing/tests/.gitignore
+*.py
+!__init__.py
 ```
 
-### Full Integration Test
-
-Requires OpenSearch access:
-
+Run tests:
 ```bash
-# Set credentials
-export OPENSEARCH_URL='https://opensearch.app.intlab.redhat.com'
-export OPENSEARCH_USER='your-username'
-export OPENSEARCH_PASS='your-password'
-
-# Run test
-python3 post_processing/tests/test_live_deduplication.py
+python3 post_processing/tests/test_deduplication.py
+python3 post_processing/tests/test_opensearch_export.py
 ```
-
-The live test will:
-1. Find available benchmark results
-2. Connect to OpenSearch
-3. Process and upload results twice
-4. Verify no duplicates were created
-5. Show document details
 
 ---
 
-## Test Coverage
+## Test Data
 
-**Deduplication System:**
-- ✅ Content hash calculation
-- ✅ Document ID generation
-- ✅ Processing timestamp exclusion
-- ✅ OpenSearch update behavior
-- ✅ No duplicate creation
-
-**Future Test Areas:**
-- Processor-specific tests (coremark, streams, pyperf, etc.)
-- Time series document deduplication
-- Bulk export operations
-- Error handling and edge cases
+Use sample benchmark results from:
+- `quick_sample_data/` - Small test datasets
+- `production_data/` - Full benchmark results (usually in .gitignore)
 
 ---
 
 ## Notes
 
-- Test scripts use `zathras-dedup-test` index (separate from production)
-- Clean up test data: `DELETE /zathras-dedup-test` in OpenSearch
-- Tests are safe to run repeatedly
-- No production data is affected
+- Tests are not committed to the repository
+- Create tests as needed for your development workflow
+- Use generic URLs (e.g., `opensearch.example.com`) in examples
+- Store credentials in environment variables, not in code

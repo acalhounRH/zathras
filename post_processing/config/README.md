@@ -38,7 +38,7 @@ export OPENSEARCH_TOKEN="your-token-here"
 ### Red Hat Internal OpenSearch
 ```yaml
 opensearch:
-  url: "https://opensearch.app.intlab.redhat.com/"
+  url: "https://opensearch.example.com/"
   index: "zathras-results"
   auth_token: "${OPENSEARCH_TOKEN}"
 ```
@@ -54,7 +54,7 @@ For Red Hat internal OpenSearch, obtain a token from:
 from post_processing.exporters.opensearch_exporter import OpenSearchExporter
 
 exporter = OpenSearchExporter(
-    url="https://opensearch.app.intlab.redhat.com/",
+    url="https://opensearch.example.com/",
     index="zathras-results",
     auth_token="your-token"
 )

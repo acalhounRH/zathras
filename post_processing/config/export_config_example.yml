@@ -3,7 +3,7 @@
 
 # OpenSearch Configuration
 opensearch:
-  url: "https://opensearch.app.intlab.redhat.com"
+  url: "https://opensearch.example.com"
   summary_index: "zathras-results"
   timeseries_index: "zathras-timeseries"
   

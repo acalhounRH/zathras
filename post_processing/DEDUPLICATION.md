@@ -160,7 +160,7 @@ This will:
 To test actual deduplication in OpenSearch:
 
 ```bash
-export OPENSEARCH_URL='https://opensearch.app.intlab.redhat.com'
+export OPENSEARCH_URL='https://opensearch.example.com'
 export OPENSEARCH_USER='your-username'
 export OPENSEARCH_PASS='your-password'
 
