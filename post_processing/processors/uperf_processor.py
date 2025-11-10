@@ -277,9 +277,10 @@ class UperfProcessor(BaseProcessor):
             status=run_data.get("status", "UNKNOWN"),
             metrics=run_data.get("overall_metrics", {}),
             configuration={
-                "test_types": list(set(c["test_type"] for c in run_data.get("configurations", {}).values())),
-                "protocols": list(set(c["protocol"] for c in run_data.get("configurations", {}).values())),
-                "packet_sizes": list(set(c["packet_size_bytes"] for c in run_data.get("configurations", {}).values()))
+                # Sort lists for deterministic ordering (important for content hash)
+                "test_types": sorted(list(set(c["test_type"] for c in run_data.get("configurations", {}).values()))),
+                "protocols": sorted(list(set(c["protocol"] for c in run_data.get("configurations", {}).values()))),
+                "packet_sizes": sorted(list(set(c["packet_size_bytes"] for c in run_data.get("configurations", {}).values())))
             },
             timeseries=timeseries if timeseries else None,
             timeseries_summary=ts_summary

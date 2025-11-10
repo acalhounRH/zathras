@@ -360,20 +360,32 @@ class ZathrasDocument:
         This hash is based on the actual test data and excludes timestamps
         that change during processing, making it suitable for duplicate detection.
         
+        The hash is based on:
+        - Test results summary metrics (not timeseries points)
+        - System Under Test (hardware, OS, config)
+        - Test configuration (parameters, workloads)
+        
+        The hash excludes:
+        - All timestamps (test_timestamp, processing_timestamp, collection_timestamp)
+        - Document ID (computed from hash)
+        - Timeseries data (stored separately, often has synthetic timestamps)
+        
         Args:
-            exclude_processing_timestamp: If True, excludes processing_timestamp
+            exclude_processing_timestamp: If True, excludes all timestamp fields
                                          from the hash calculation
         
         Returns:
             Hex string of SHA256 hash (64 characters)
         """
-        # Create a deep copy to avoid modifying the original
-        doc_dict = copy.deepcopy(self.to_dict())
+        # Use summary-only data (excludes timeseries which often has synthetic timestamps)
+        doc_dict = copy.deepcopy(self.to_dict_summary_only())
         
-        # Remove fields that change on re-processing
+        # Remove fields that change on re-processing or are metadata-only
         if exclude_processing_timestamp and 'metadata' in doc_dict:
-            # Remove processing_timestamp as it changes every time
+            # Remove ALL timestamps - they're metadata, not test results
             doc_dict['metadata'].pop('processing_timestamp', None)
+            doc_dict['metadata'].pop('test_timestamp', None)
+            doc_dict['metadata'].pop('collection_timestamp', None)
             # Also remove document_id as we're computing it
             doc_dict['metadata'].pop('document_id', None)
         

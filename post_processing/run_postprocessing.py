@@ -73,6 +73,10 @@ class ProcessingStats:
         self.skipped = 0
         self.errors: List[Tuple[str, str]] = []
         self.processed_tests: Dict[str, int] = {}
+        self.documents_created = 0
+        self.documents_duplicates = 0
+        self.timeseries_indexed = 0
+        self.timeseries_skipped = 0
         self.start_time = datetime.now()
     
     def record_success(self, test_name: str):
@@ -86,6 +90,22 @@ class ProcessingStats:
     def record_skip(self, test_name: str, reason: str):
         self.skipped += 1
         self.errors.append((test_name, f"SKIPPED: {reason}"))
+    
+    def record_document_created(self):
+        """Track when a new document is created in OpenSearch"""
+        self.documents_created += 1
+    
+    def record_duplicate(self):
+        """Track when a duplicate document is detected and skipped"""
+        self.documents_duplicates += 1
+    
+    def record_timeseries_indexed(self, count: int):
+        """Track time series points that were indexed"""
+        self.timeseries_indexed += count
+    
+    def record_timeseries_skipped(self, count: int):
+        """Track time series points that were skipped (due to duplicate summary)"""
+        self.timeseries_skipped += count
     
     def get_summary(self) -> str:
         duration = (datetime.now() - self.start_time).total_seconds()
@@ -103,6 +123,24 @@ class ProcessingStats:
             "",
         ]
         
+        # Show OpenSearch summary document stats
+        if self.documents_created > 0 or self.documents_duplicates > 0:
+            total_docs = self.documents_created + self.documents_duplicates
+            summary.append("OpenSearch Summary Documents:")
+            summary.append(f"  📊 Total: {total_docs}")
+            summary.append(f"  🆕 Indexed: {self.documents_created}")
+            summary.append(f"  ⚠️  Duplicates (skipped): {self.documents_duplicates}")
+            summary.append("")
+        
+        # Show time series stats
+        if self.timeseries_indexed > 0 or self.timeseries_skipped > 0:
+            total_ts = self.timeseries_indexed + self.timeseries_skipped
+            summary.append("OpenSearch Time Series Documents:")
+            summary.append(f"  📊 Total: {total_ts}")
+            summary.append(f"  🆕 Indexed: {self.timeseries_indexed}")
+            summary.append(f"  ⚠️  Duplicates (skipped): {self.timeseries_skipped}")
+            summary.append("")
+        
         if self.processed_tests:
             summary.append("Tests Processed:")
             for test_name, count in sorted(self.processed_tests.items()):
@@ -110,11 +148,10 @@ class ProcessingStats:
             summary.append("")
         
         if self.errors:
-            summary.append("Errors:")
-            for test_name, error in self.errors[:10]:  # Limit to first 10
+            summary.append(f"Errors ({len(self.errors)}):")
+            # Show ALL errors, not just first 10
+            for test_name, error in self.errors:
                 summary.append(f"  • {test_name}: {error}")
-            if len(self.errors) > 10:
-                summary.append(f"  ... and {len(self.errors) - 10} more errors")
             summary.append("")
         
         summary.append("=" * 70)
@@ -307,21 +344,41 @@ def process_result_directory(
                     summary_dict = document.to_dict_summary_only()
                     doc_id = document.metadata.document_id
                     
-                    opensearch_summary_exporter.export_document(summary_dict, doc_id=doc_id)
-                    logger.info(f"  📤 Exported to OpenSearch (summary): {doc_id}")
+                    # Try to create document (will fail if duplicate exists)
+                    result = opensearch_summary_exporter.create_document(summary_dict, doc_id=doc_id)
+                    operation = result['result']  # 'created' or 'duplicate'
                     
-                    # Export time series (if any)
-                    ts_count = sum(
-                        len(run.timeseries) for run in document.results.runs.values() 
-                        if run.timeseries
-                    )
-                    
-                    if ts_count > 0:
-                        result = opensearch_ts_exporter.export_from_zathras_document(document, batch_size=500)
-                        logger.info(f"  📤 Exported to OpenSearch (timeseries): {result['successful']}/{result['total']} points")
+                    # Track whether this was a new document or duplicate
+                    if operation == 'created':
+                        stats.record_document_created()
+                        logger.info(f"  🆕 Created in OpenSearch (summary): {doc_id}")
                         
-                        if result['failed'] > 0:
-                            logger.warning(f"     ⚠️  Failed: {result['failed']} time series points")
+                        # Export time series only if summary was created (not duplicate)
+                        ts_count = sum(
+                            len(run.timeseries) for run in document.results.runs.values() 
+                            if run.timeseries
+                        )
+                        
+                        if ts_count > 0:
+                            ts_result = opensearch_ts_exporter.export_from_zathras_document(document, batch_size=500)
+                            stats.record_timeseries_indexed(ts_result['successful'])
+                            logger.info(f"  📤 Exported to OpenSearch (timeseries): {ts_result['successful']}/{ts_result['total']} points")
+                            
+                            if ts_result['failed'] > 0:
+                                logger.warning(f"     ⚠️  Failed: {ts_result['failed']} time series points")
+                    
+                    elif operation == 'duplicate':
+                        stats.record_duplicate()
+                        
+                        # Count time series that would have been indexed (but skipped due to duplicate)
+                        ts_count = sum(
+                            len(run.timeseries) for run in document.results.runs.values() 
+                            if run.timeseries
+                        )
+                        if ts_count > 0:
+                            stats.record_timeseries_skipped(ts_count)
+                        
+                        logger.warning(f"  ⚠️  Duplicate detected, skipped: {doc_id}")
                     
                 except Exception as e:
                     logger.error(f"  ❌ OpenSearch export failed: {e}")
