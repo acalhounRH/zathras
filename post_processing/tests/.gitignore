@@ -1,0 +1,6 @@
+# Ignore all test Python files
+*.py
+
+# But keep __init__.py if needed
+!__init__.py
+

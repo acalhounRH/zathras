@@ -107,8 +107,8 @@ vim post_processing/config/export_config.yml  # Add your credentials
 ### OpenSearch Dashboards
 
 Access your exported data:
-- **Discover:** https://opensearch.app.intlab.redhat.com/_dashboards/app/discover
-- **Dev Tools:** https://opensearch.app.intlab.redhat.com/_dashboards/app/dev_tools
+- **Discover:** https://your-opensearch-url/_dashboards/app/discover
+- **Dev Tools:** https://your-opensearch-url/_dashboards/app/dev_tools
 
 ### Quick Queries
 
@@ -199,7 +199,7 @@ vim post_processing/config/export_config.yml
 Example config:
 ```yaml
 opensearch:
-  url: "https://opensearch.app.intlab.redhat.com"
+  url: "https://opensearch.example.com"
   summary_index: "zathras-results"        # Summary documents
   timeseries_index: "zathras-timeseries"  # Individual time series points
   username: "example-user"
