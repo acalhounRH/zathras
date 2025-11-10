@@ -125,7 +125,7 @@ class BaseProcessor(ABC):
             results = self.build_results()
             runtime_info = self.build_runtime_info()
             
-            # Create document
+            # Create document with temporary ID
             document = ZathrasDocument(
                 metadata=metadata,
                 test=test_info,
@@ -134,6 +134,17 @@ class BaseProcessor(ABC):
                 results=results,
                 runtime_info=runtime_info
             )
+            
+            # Calculate content-based hash for duplicate detection
+            # This hash excludes processing_timestamp, so identical test results
+            # will always generate the same hash, preventing duplicates in OpenSearch
+            content_hash = document.calculate_content_hash()
+            
+            # Update document_id with content hash
+            # Use first 16 chars of hash for readability, full hash for uniqueness
+            document.metadata.document_id = f"{test_name}_{content_hash[:16]}"
+            
+            logger.debug(f"Document ID: {document.metadata.document_id} (content hash: {content_hash})")
             
             # Validate
             is_valid, errors = document.validate()

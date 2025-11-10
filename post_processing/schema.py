@@ -15,6 +15,8 @@ from dataclasses import dataclass, field, asdict
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import json
+import hashlib
+import copy
 
 
 @dataclass
@@ -350,6 +352,37 @@ class ZathrasDocument:
     def to_json(self, indent: int = 2) -> str:
         """Convert to JSON string"""
         return json.dumps(self.to_dict(), indent=indent)
+    
+    def calculate_content_hash(self, exclude_processing_timestamp: bool = True) -> str:
+        """
+        Calculate a deterministic SHA256 hash of the document content.
+        
+        This hash is based on the actual test data and excludes timestamps
+        that change during processing, making it suitable for duplicate detection.
+        
+        Args:
+            exclude_processing_timestamp: If True, excludes processing_timestamp
+                                         from the hash calculation
+        
+        Returns:
+            Hex string of SHA256 hash (64 characters)
+        """
+        # Create a deep copy to avoid modifying the original
+        doc_dict = copy.deepcopy(self.to_dict())
+        
+        # Remove fields that change on re-processing
+        if exclude_processing_timestamp and 'metadata' in doc_dict:
+            # Remove processing_timestamp as it changes every time
+            doc_dict['metadata'].pop('processing_timestamp', None)
+            # Also remove document_id as we're computing it
+            doc_dict['metadata'].pop('document_id', None)
+        
+        # Sort keys for deterministic ordering
+        sorted_json = json.dumps(doc_dict, sort_keys=True, separators=(',', ':'))
+        
+        # Calculate SHA256 hash
+        hash_obj = hashlib.sha256(sorted_json.encode('utf-8'))
+        return hash_obj.hexdigest()
     
     def to_dict_summary_only(self) -> Dict[str, Any]:
         """

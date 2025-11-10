@@ -327,6 +327,81 @@ print(f"Run ID: {run_id}")
 
 ---
 
+## Duplicate Prevention
+
+Zathras uses **content-based checksums** to prevent duplicate documents when reprocessing the same test results.
+
+### How It Works
+
+Each document is assigned a deterministic ID based on a SHA256 hash of its content:
+
+```
+Document ID = {test_name}_{content_hash[:16]}
+Example: coremark_fdcfbbf0e6a525ea
+```
+
+The hash includes:
+- Test name, version, and configuration
+- System details (CPU, memory, OS)
+- All benchmark results and metrics
+- Original test timestamp
+
+The hash **excludes** `processing_timestamp`, ensuring identical test results always generate the same ID.
+
+### Benefits
+
+**Prevents Duplicates:**
+```bash
+# Process results
+python3 -m post_processing.run_postprocessing --input results/ --opensearch
+
+# Reprocess same results (e.g., after fixing a bug)
+python3 -m post_processing.run_postprocessing --input results/ --opensearch
+
+# Result: Same document updated in OpenSearch, no duplicate created
+```
+
+**Safe Reprocessing:**
+- Fix processor bugs without creating duplicates
+- Add new fields to existing documents
+- Update metadata or extractors
+- Track last processing time via `processing_timestamp`
+
+**OpenSearch Behavior:**
+```python
+# First upload
+POST /zathras-results/_doc/coremark_fdcfbbf0e6a525ea
+→ Creates new document
+
+# Second upload (same test results, different processing time)
+POST /zathras-results/_doc/coremark_fdcfbbf0e6a525ea
+→ Updates existing document (no duplicate)
+```
+
+### When Duplicates WILL Occur
+
+Duplicates only happen when **actual test data differs**:
+
+- Different test runs (different timestamps/results)
+- Different systems (different CPU/memory)
+- Different configurations (different parameters)
+
+This is expected behavior representing genuinely different tests.
+
+### Testing
+
+Verify deduplication works:
+
+```bash
+python3 post_processing/tests/test_deduplication_simple.py
+```
+
+Output shows that processing the same data multiple times generates identical hashes.
+
+For full documentation, see [`DEDUPLICATION.md`](DEDUPLICATION.md).
+
+---
+
 ## Schema & Data Structure
 
 ### Two-Index Architecture
