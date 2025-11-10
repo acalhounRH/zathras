@@ -142,6 +142,7 @@ class BaseProcessor(ABC):
             
             # Update document_id with content hash
             # Use first 16 chars of hash for readability, full hash for uniqueness
+            test_name = document.test.name
             document.metadata.document_id = f"{test_name}_{content_hash[:16]}"
             
             logger.debug(f"Document ID: {document.metadata.document_id} (content hash: {content_hash})")
