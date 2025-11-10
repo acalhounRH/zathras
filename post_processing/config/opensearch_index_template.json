@@ -1,16 +1,21 @@
 {
-  "index_patterns": ["zathras-results-*"],
+  "index_patterns": ["zathras-results*"],
   "template": {
     "settings": {
       "number_of_shards": 3,
       "number_of_replicas": 1,
       "index": {
         "refresh_interval": "5s",
-        "max_result_window": 50000
+        "max_result_window": 50000,
+        "mapping": {
+          "total_fields": {
+            "limit": 5000
+          }
+        }
       }
     },
     "mappings": {
-      "dynamic": "strict",
+      "dynamic": false,
       "dynamic_templates": [
         {
           "run_objects": {
@@ -88,7 +93,14 @@
             "document_id": {"type": "keyword"},
             "document_type": {"type": "keyword"},
             "zathras_version": {"type": "keyword"},
-            "collection_timestamp": {"type": "date"}
+            "test_timestamp": {"type": "date"},
+            "processing_timestamp": {"type": "date"},
+            "collection_timestamp": {"type": "date"},
+            "os_vendor": {"type": "keyword"},
+            "cloud_provider": {"type": "keyword"},
+            "instance_type": {"type": "keyword"},
+            "scenario_name": {"type": "keyword"},
+            "iteration": {"type": "integer"}
           }
         },
         "test": {

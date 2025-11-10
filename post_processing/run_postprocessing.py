@@ -42,11 +42,40 @@ from .exporters.opensearch_exporter import OpenSearchExporter
 from .exporters.timeseries_exporter import TimeSeriesExporter
 from .exporters.horreum_exporter import HorreumExporter
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+
+# Color codes for terminal output
+class ColoredFormatter(logging.Formatter):
+    """Custom formatter that adds colors to log levels"""
+    
+    # ANSI color codes
+    COLORS = {
+        'WARNING': '\033[93m',  # Yellow
+        'ERROR': '\033[91m',    # Red
+        'RESET': '\033[0m'      # Reset
+    }
+    
+    def format(self, record):
+        # Save the original levelname
+        levelname = record.levelname
+        
+        # Add color to WARNING and ERROR levels
+        if levelname in self.COLORS:
+            record.levelname = f"{self.COLORS[levelname]}{levelname}{self.COLORS['RESET']}"
+        
+        # Format the message
+        result = super().format(record)
+        
+        # Restore original levelname
+        record.levelname = levelname
+        
+        return result
+
+
+# Configure logging with colors
+handler = logging.StreamHandler()
+handler.setFormatter(ColoredFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logging.root.addHandler(handler)
+logging.root.setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -116,9 +145,9 @@ class ProcessingStats:
             "PROCESSING SUMMARY",
             "=" * 70,
             f"Total: {self.total}",
-            f"✅ Successful: {self.successful}",
-            f"❌ Failed: {self.failed}",
-            f"⏭️  Skipped: {self.skipped}",
+            f"Successful: {self.successful}",
+            f"Failed: {self.failed}",
+            f"Skipped: {self.skipped}",
             f"Duration: {duration:.2f} seconds",
             "",
         ]
@@ -127,31 +156,31 @@ class ProcessingStats:
         if self.documents_created > 0 or self.documents_duplicates > 0:
             total_docs = self.documents_created + self.documents_duplicates
             summary.append("OpenSearch Summary Documents:")
-            summary.append(f"  📊 Total: {total_docs}")
-            summary.append(f"  🆕 Indexed: {self.documents_created}")
-            summary.append(f"  ⚠️  Duplicates (skipped): {self.documents_duplicates}")
+            summary.append(f"  Total: {total_docs}")
+            summary.append(f"  Indexed: {self.documents_created}")
+            summary.append(f"  Duplicates (skipped): {self.documents_duplicates}")
             summary.append("")
         
         # Show time series stats
         if self.timeseries_indexed > 0 or self.timeseries_skipped > 0:
             total_ts = self.timeseries_indexed + self.timeseries_skipped
             summary.append("OpenSearch Time Series Documents:")
-            summary.append(f"  📊 Total: {total_ts}")
-            summary.append(f"  🆕 Indexed: {self.timeseries_indexed}")
-            summary.append(f"  ⚠️  Duplicates (skipped): {self.timeseries_skipped}")
+            summary.append(f"  Total: {total_ts}")
+            summary.append(f"  Indexed: {self.timeseries_indexed}")
+            summary.append(f"  Duplicates (skipped): {self.timeseries_skipped}")
             summary.append("")
         
         if self.processed_tests:
             summary.append("Tests Processed:")
             for test_name, count in sorted(self.processed_tests.items()):
-                summary.append(f"  • {test_name}: {count}")
+                summary.append(f"  - {test_name}: {count}")
             summary.append("")
         
         if self.errors:
             summary.append(f"Errors ({len(self.errors)}):")
             # Show ALL errors, not just first 10
             for test_name, error in self.errors:
-                summary.append(f"  • {test_name}: {error}")
+                summary.append(f"  - {test_name}: {error}")
             summary.append("")
         
         summary.append("=" * 70)
@@ -327,7 +356,7 @@ def process_result_directory(
             processor = processor_class(result_dir)
             document = processor.process()
             
-            logger.info(f"  ✅ Parsed {test_name}: {document.metadata.document_id}")
+            logger.info(f"  Parsed {test_name}: {document.metadata.document_id}")
             
             # Export to JSON file if requested
             if output_json_dir:
@@ -335,7 +364,11 @@ def process_result_directory(
                 json_file = output_json_dir / f"{document.metadata.document_id}.json"
                 with open(json_file, 'w') as f:
                     f.write(document.to_json())
-                logger.info(f"  📄 Wrote JSON: {json_file.name}")
+                logger.info(f"  Wrote JSON: {json_file.name}")
+            
+            # Track export failures
+            export_failed = False
+            export_error = None
             
             # Export to OpenSearch (two-index architecture)
             if export_opensearch and opensearch_summary_exporter and opensearch_ts_exporter:
@@ -351,7 +384,7 @@ def process_result_directory(
                     # Track whether this was a new document or duplicate
                     if operation == 'created':
                         stats.record_document_created()
-                        logger.info(f"  🆕 Created in OpenSearch (summary): {doc_id}")
+                        logger.info(f"  Created in OpenSearch (summary): {doc_id}")
                         
                         # Export time series only if summary was created (not duplicate)
                         ts_count = sum(
@@ -362,10 +395,10 @@ def process_result_directory(
                         if ts_count > 0:
                             ts_result = opensearch_ts_exporter.export_from_zathras_document(document, batch_size=500)
                             stats.record_timeseries_indexed(ts_result['successful'])
-                            logger.info(f"  📤 Exported to OpenSearch (timeseries): {ts_result['successful']}/{ts_result['total']} points")
+                            logger.info(f"  Exported to OpenSearch (timeseries): {ts_result['successful']}/{ts_result['total']} points")
                             
                             if ts_result['failed'] > 0:
-                                logger.warning(f"     ⚠️  Failed: {ts_result['failed']} time series points")
+                                logger.warning(f"     Failed: {ts_result['failed']} time series points")
                     
                     elif operation == 'duplicate':
                         stats.record_duplicate()
@@ -378,28 +411,42 @@ def process_result_directory(
                         if ts_count > 0:
                             stats.record_timeseries_skipped(ts_count)
                         
-                        logger.warning(f"  ⚠️  Duplicate detected, skipped: {doc_id}")
+                        logger.warning(f"  Duplicate detected, skipped: {doc_id}")
                     
                 except Exception as e:
-                    logger.error(f"  ❌ OpenSearch export failed: {e}")
+                    export_failed = True
+                    export_error = f"OpenSearch export failed: {e}"
+                    logger.error(f"  {export_error}")
             
             # Export to Horreum
             if export_horreum and horreum_exporter:
                 try:
                     run_id = horreum_exporter.export_zathras_document(document)
-                    logger.info(f"  📤 Exported to Horreum: run {run_id}")
+                    logger.info(f"  Exported to Horreum: run {run_id}")
                 except Exception as e:
-                    logger.error(f"  ❌ Horreum export failed: {e}")
+                    if not export_failed:
+                        export_failed = True
+                        export_error = f"Horreum export failed: {e}"
+                    logger.error(f"  Horreum export failed: {e}")
             
-            stats.record_success(test_name)
-            results.append({
-                'test_name': test_name,
-                'document_id': document.metadata.document_id,
-                'status': 'success'
-            })
+            # Record success or failure
+            if export_failed:
+                stats.record_failure(test_name, export_error)
+                results.append({
+                    'test_name': test_name,
+                    'status': 'failed',
+                    'error': export_error
+                })
+            else:
+                stats.record_success(test_name)
+                results.append({
+                    'test_name': test_name,
+                    'document_id': document.metadata.document_id,
+                    'status': 'success'
+                })
             
         except Exception as e:
-            logger.error(f"  ❌ Failed to process {test_name}: {e}")
+            logger.error(f"  Failed to process {test_name}: {e}")
             import traceback
             logger.debug(traceback.format_exc())
             stats.record_failure(test_name, str(e))

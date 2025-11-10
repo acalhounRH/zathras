@@ -147,9 +147,16 @@ class OpenSearchExporter:
                     
             except urllib.error.HTTPError as e:
                 error_body = e.read().decode('utf-8')
-                self.logger.error(
-                    f"HTTP {e.code} error on attempt {attempt + 1}/{self.max_retries}: {error_body}"
-                )
+                
+                # HTTP 409 is expected for duplicates - log as warning
+                if e.code == 409:
+                    self.logger.warning(
+                        f"HTTP {e.code} conflict on attempt {attempt + 1}/{self.max_retries}: {error_body}"
+                    )
+                else:
+                    self.logger.error(
+                        f"HTTP {e.code} error on attempt {attempt + 1}/{self.max_retries}: {error_body}"
+                    )
                 
                 # Don't retry on client errors (4xx)
                 if 400 <= e.code < 500:

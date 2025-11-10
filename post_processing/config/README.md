@@ -5,17 +5,54 @@ This directory contains configuration files for the Zathras post-processing pipe
 ## Files
 
 ### `opensearch_index_template.json`
-OpenSearch index template with object-based mappings for Zathras benchmark results.
+OpenSearch index template for the `zathras-results` index (summary documents).
 
 **Features:**
+- Field limit: **5,000** (increased from default 1,000)
 - Dynamic templates for runs (`run_1`, `run_2`, etc.)
-- Timestamp-keyed time series data
-- Boolean object for CPU flags
 - Object mappings for NUMA nodes, storage devices, network interfaces
-- Optimized for aggregations and queries
+- Boolean object for CPU flags
+- Optimized for high-core systems (64+ cores)
 
 **Usage:**
-The template is automatically applied by `OpenSearchExporter` when creating a new index.
+Apply using `apply_opensearch_templates.sh` script (requires admin permissions).
+
+### `opensearch_timeseries_template.json`
+OpenSearch index template for the `zathras-timeseries` index (individual time series points).
+
+**Features:**
+- Field limit: **2,000**
+- Optimized for high-volume time series data
+- Minimal field set per document
+- Full SUT context denormalized into each point
+
+**Usage:**
+Apply using `apply_opensearch_templates.sh` script (requires admin permissions).
+
+### `apply_opensearch_templates.sh`
+Shell script to apply index templates to OpenSearch cluster.
+
+**Prerequisites:**
+- OpenSearch admin permissions
+- Network access to OpenSearch cluster
+- `curl` and `python3` installed
+
+**Usage:**
+```bash
+./apply_opensearch_templates.sh <opensearch_url> <username> <password>
+
+# Example:
+./apply_opensearch_templates.sh https://opensearch.app.intlab.redhat.com admin 'password123'
+```
+
+**What it does:**
+1. Applies `zathras-results` template (5,000 field limit)
+2. Applies `zathras-timeseries` template (2,000 field limit)
+3. Deletes existing indices (⚠️ **data will be lost!**)
+4. Verifies templates are applied correctly
+
+**After applying:**
+Re-run the post-processing script to re-index all data with the new templates.
 
 ### `export_config.example.yml`
 Example configuration for OpenSearch and Horreum exporters.
@@ -25,10 +62,8 @@ Example configuration for OpenSearch and Horreum exporters.
 # Copy example to actual config
 cp export_config.example.yml export_config.yml
 
-# Set environment variables
-export OPENSEARCH_TOKEN="your-token-here"
-
-# Or edit export_config.yml directly
+# Edit with your credentials
+vim export_config.yml
 ```
 
 **Important:** `export_config.yml` is in `.gitignore` to prevent committing credentials.
@@ -141,6 +176,63 @@ GET /zathras-results/_search
 - Rotate tokens regularly
 - Use SSL/TLS in production (`verify_ssl: true`)
 
+## Field Limit Issue
+
+### Problem
+OpenSearch has a default field limit of **1,000** per index. High-core systems (64+ cores) can exceed this limit:
+
+- CoreMark on 128-core system: ~1,000 fields (one per core + metadata)
+- PyPerf on 96-core system: ~900 fields (90 benchmarks × cores)
+
+**Error message:**
+```
+Limit of total fields [1000] has been exceeded
+```
+
+### Solution
+
+The templates in this directory increase the limit to **5,000** for `zathras-results` and **2,000** for `zathras-timeseries`.
+
+**If you have admin access:**
+```bash
+./apply_opensearch_templates.sh https://opensearch.example.com admin 'password'
+```
+
+**If you need to request from your admin:**
+
+Share this justification:
+
+> **Request: Increase OpenSearch Field Limit**
+> 
+> **Current Issue:** The `zathras-results` index is hitting the default 1,000 field limit when indexing benchmark results from high-core systems (64+ cores).
+> 
+> **Requested Change:** Increase field limit to 5,000 for `zathras-results` and 2,000 for `zathras-timeseries`.
+> 
+> **Justification:**
+> - Field count is bounded and predictable (based on CPU core count, max ~1,200 fields)
+> - Two-index architecture already reduces fields per index
+> - No dynamic user-generated field names (low risk)
+> - 5,000 is well within OpenSearch's supported limits (10,000+)
+> - Benchmarking high-core systems (128+ cores) is a core use case
+> 
+> **Alternatives considered:**
+> - Aggregating per-core data (loses query granularity)
+> - Splitting indices by core count (complicates queries)
+> - Storing as JSON blobs (defeats purpose of structured search)
+> 
+> **Template files:** Available at `post_processing/config/opensearch_*_template.json`
+
+### Downsides of Increasing Field Limit
+
+1. **Memory Usage**: Each field mapping consumes memory per shard (~moderate increase)
+2. **Query Performance**: Slight slowdown for wildcard searches (negligible for targeted queries)
+3. **Indexing Performance**: Minor overhead maintaining more field mappings
+
+**These downsides are acceptable** because:
+- Field count is bounded (not unbounded user data)
+- Read-heavy workload (analysis queries, not real-time indexing)
+- Two-index architecture already mitigates concerns
+
 ## Troubleshooting
 
 ### Connection Errors
@@ -168,4 +260,10 @@ Error: 401 Unauthorized
 Error: 400 index_already_exists_exception
 ```
 **Solution:** This is normal if index exists. Exporter handles this automatically.
+
+### Field Limit Errors
+```
+Error: Limit of total fields [1000] has been exceeded
+```
+**Solution:** See the "Field Limit Issue" section above. You need to apply the index templates with increased field limits (requires admin permissions).
 
