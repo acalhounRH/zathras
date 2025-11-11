@@ -38,11 +38,20 @@ config/failed_test
 
 # Post-processing: Ignore real config files with credentials
 post_processing/config/export_config.yml
+post_processing/config/export_config*.yml
 post_processing/extracted_zathras_results/
 
 # Post-processing: Ignore test outputs
 post_processing/**/__pycache__/
 post_processing/**/*.pyc
+
 # Post-processing: Ignore production data and temporary extraction directories
 production_data/
+quick_sample_data/
+perf-*/
+*_json_output/
+*_json/
+all_benchmarks_json/
+test_new_benchmarks/
+coremark_test/
 

@@ -85,6 +85,21 @@
               "type": "boolean"
             }
           }
+        },
+        {
+          "validation_threads": {
+            "path_match": "results.runs.*.validation.threads",
+            "mapping": {
+              "type": "nested",
+              "properties": {
+                "thread": {"type": "integer"},
+                "crcfinal": {"type": "keyword"},
+                "crclist": {"type": "keyword"},
+                "crcmatrix": {"type": "keyword"},
+                "crcstate": {"type": "keyword"}
+              }
+            }
+          }
         }
       ],
       "properties": {
