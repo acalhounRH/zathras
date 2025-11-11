@@ -168,6 +168,44 @@ GET /zathras-results/_search
 }
 ```
 
+**Query CoreMark validation data (nested):**
+```json
+GET /zathras-results/_search
+{
+  "query": {
+    "nested": {
+      "path": "results.runs.run_1.validation.threads",
+      "query": {
+        "bool": {
+          "must": [
+            {"term": {"results.runs.run_1.validation.threads.thread": 0}},
+            {"term": {"results.runs.run_1.validation.threads.crcfinal": "0x65c5"}}
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+**Count validation CRCs across threads (nested aggregation):**
+```json
+GET /zathras-results/_search
+{
+  "size": 0,
+  "aggs": {
+    "validation_nested": {
+      "nested": {"path": "results.runs.run_1.validation.threads"},
+      "aggs": {
+        "crc_values": {
+          "terms": {"field": "results.runs.run_1.validation.threads.crcfinal"}
+        }
+      }
+    }
+  }
+}
+```
+
 ## Security
 
 ⚠️ **Important:**
@@ -190,6 +228,28 @@ Limit of total fields [1000] has been exceeded
 ```
 
 ### Solution
+
+**1. Nested Array Optimization (CoreMark)**
+
+CoreMark validation data is stored as a **nested array** to reduce field count:
+
+- **Before:** `validation.0_crcfinal`, `validation.1_crcfinal`, ... (1 field per thread)
+- **After:** `validation.threads` (nested array, 1 field total)
+
+**Field reduction on 256-core system:**
+- Before: ~2,370 total fields (2,048 validation fields)
+- After: ~334 total fields (18 validation fields)
+- **Savings: 2,000+ fields (85% reduction)**
+
+The index template defines `validation.threads` as `nested` type to preserve thread-to-CRC relationships.
+
+**2. Multi-Document Processing (PyPerf)**
+
+PyPerf creates one document per benchmark instead of bundling all benchmarks:
+- Before: 1 document with 104 benchmarks × 256 cores = ~26,000 fields
+- After: 104 documents with ~250 fields each
+
+**3. Increased Field Limits**
 
 The templates in this directory increase the limit to **5,000** for `zathras-results` and **2,000** for `zathras-timeseries`.
 

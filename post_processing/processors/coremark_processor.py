@@ -275,18 +275,62 @@ class CoreMarkProcessor(BaseProcessor):
         return timeseries, summary
     
     def _extract_validation(self, summary: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract validation checksums from summary"""
-        validation = {}
+        """
+        Extract validation checksums from summary
         
-        # Look for validation fields
+        Converts flat dict structure to array of objects to reduce field count.
+        
+        Old format (1024 fields):
+            {"0_crcfinal": "...", "0_crclist": "...", ...}
+        
+        New format (~5 fields with nested type):
+            {
+                "status": "PASS",
+                "seedcrc": "...",
+                "threads": [
+                    {"thread": 0, "crcfinal": "...", "crclist": "...", "crcmatrix": "...", "crcstate": "..."},
+                    ...
+                ]
+            }
+        """
+        # Group CRC values by thread
+        threads_data = {}
+        seedcrc = None
+        
         for key, value in summary.items():
-            if 'crc' in key.lower() or 'seed' in key.lower():
-                validation[key] = value
+            key_lower = key.lower()
+            
+            if key_lower == 'seedcrc':
+                seedcrc = value
+            elif '_crc' in key_lower:
+                # Parse thread number and CRC type from key like "0_crcfinal"
+                parts = key.split('_', 1)
+                if len(parts) == 2:
+                    try:
+                        thread_num = int(parts[0])
+                        crc_type = parts[1]  # e.g., "crcfinal", "crclist", etc.
+                        
+                        if thread_num not in threads_data:
+                            threads_data[thread_num] = {'thread': thread_num}
+                        
+                        threads_data[thread_num][crc_type] = value
+                    except (ValueError, IndexError):
+                        # Skip malformed keys
+                        pass
         
-        if validation:
-            validation['status'] = 'PASS'  # If we got checksums, assume validation passed
+        # Build validation object
+        if threads_data or seedcrc:
+            validation = {
+                'status': 'PASS',
+                'threads': [threads_data[t] for t in sorted(threads_data.keys())]
+            }
+            
+            if seedcrc:
+                validation['seedcrc'] = seedcrc
+            
+            return validation
         
-        return validation if validation else None
+        return None
 
 
 def process_coremark(result_directory: str) -> Dict[str, Any]:

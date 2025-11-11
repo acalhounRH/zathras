@@ -1,11 +1,13 @@
 #!/bin/bash
 #
-# Apply OpenSearch index templates and recreate indices with increased field limits
+# Apply OpenSearch index templates with increased field limits and nested validation
 #
 # Usage: ./apply_opensearch_templates.sh <opensearch_url> <username> <password>
 #
 # Example:
 #   ./apply_opensearch_templates.sh https://opensearch.app.intlab.redhat.com automotive 'D6O8#zke0iSc'
+#
+# Note: Templates only apply to NEW indices. To apply to existing indices, you must delete them first.
 #
 
 set -e
@@ -48,30 +50,12 @@ echo ""
 echo ""
 
 echo "========================================"
-echo "Deleting Existing Indices"
-echo "========================================"
-echo ""
-
-# Delete existing indices to apply new templates
-echo "3. Deleting zathras-results index (if exists)..."
-curl -k -X DELETE "${OPENSEARCH_URL}/zathras-results" \
-  -u "${USERNAME}:${PASSWORD}" 2>/dev/null || echo "Index does not exist (OK)"
-echo ""
-echo ""
-
-echo "4. Deleting zathras-timeseries index (if exists)..."
-curl -k -X DELETE "${OPENSEARCH_URL}/zathras-timeseries" \
-  -u "${USERNAME}:${PASSWORD}" 2>/dev/null || echo "Index does not exist (OK)"
-echo ""
-echo ""
-
-echo "========================================"
 echo "Verification"
 echo "========================================"
 echo ""
 
 # Verify templates are applied
-echo "5. Verifying templates..."
+echo "3. Verifying templates..."
 echo ""
 echo "Results template:"
 curl -k -s -X GET "${OPENSEARCH_URL}/_index_template/zathras-results-template" \
@@ -86,8 +70,11 @@ echo "========================================"
 echo "Done!"
 echo "========================================"
 echo ""
-echo "Next steps:"
-echo "1. Re-run the post-processing script to re-index all data"
-echo "2. The new indices will be created with the 5000 field limit"
+echo "Templates applied successfully!"
+echo ""
+echo "Note: Templates only apply to NEW indices."
+echo "To apply templates to existing indices, you must delete and recreate them:"
+echo "  curl -k -X DELETE '${OPENSEARCH_URL}/zathras-results' -u '${USERNAME}:PASSWORD'"
+echo "  curl -k -X DELETE '${OPENSEARCH_URL}/zathras-timeseries' -u '${USERNAME}:PASSWORD'"
 echo ""
 

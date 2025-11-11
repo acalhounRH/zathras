@@ -36,6 +36,8 @@ from .processors.coremark_pro_processor import CoreMarkProProcessor
 from .processors.passmark_processor import PassmarkProcessor
 from .processors.phoronix_processor import PhoronixProcessor
 from .processors.uperf_processor import UperfProcessor
+from .processors.pig_processor import PigProcessor
+from .processors.autohpl_processor import AutoHPLProcessor
 
 # Import exporters
 from .exporters.opensearch_exporter import OpenSearchExporter
@@ -89,6 +91,8 @@ PROCESSOR_REGISTRY = {
     'passmark': PassmarkProcessor,
     'phoronix': PhoronixProcessor,
     'uperf': UperfProcessor,
+    'pig': PigProcessor,
+    'auto_hpl': AutoHPLProcessor,
 }
 
 
@@ -106,6 +110,7 @@ class ProcessingStats:
         self.documents_duplicates = 0
         self.timeseries_indexed = 0
         self.timeseries_skipped = 0
+        self.opensearch_export_enabled = False
         self.start_time = datetime.now()
     
     def record_success(self, test_name: str):
@@ -152,17 +157,16 @@ class ProcessingStats:
             "",
         ]
         
-        # Show OpenSearch summary document stats
-        if self.documents_created > 0 or self.documents_duplicates > 0:
+        # Show OpenSearch summary document stats (if OpenSearch export was enabled)
+        if self.opensearch_export_enabled:
             total_docs = self.documents_created + self.documents_duplicates
             summary.append("OpenSearch Summary Documents:")
             summary.append(f"  Total: {total_docs}")
             summary.append(f"  Indexed: {self.documents_created}")
             summary.append(f"  Duplicates (skipped): {self.documents_duplicates}")
             summary.append("")
-        
-        # Show time series stats
-        if self.timeseries_indexed > 0 or self.timeseries_skipped > 0:
+            
+            # Show time series stats
             total_ts = self.timeseries_indexed + self.timeseries_skipped
             summary.append("OpenSearch Time Series Documents:")
             summary.append(f"  Total: {total_ts}")
@@ -354,80 +358,98 @@ def process_result_directory(
             
             # Process the results
             processor = processor_class(result_dir)
-            document = processor.process()
             
-            logger.info(f"  Parsed {test_name}: {document.metadata.document_id}")
+            # Check if processor supports multi-document mode (e.g., PyPerf)
+            if hasattr(processor, 'process_multiple'):
+                documents = processor.process_multiple()
+                logger.info(f"  Parsed {test_name}: {len(documents)} documents")
+            else:
+                documents = [processor.process()]
+                logger.info(f"  Parsed {test_name}: {documents[0].metadata.document_id}")
             
-            # Export to JSON file if requested
+            # Export to JSON files if requested
             if output_json_dir:
                 output_json_dir.mkdir(parents=True, exist_ok=True)
-                json_file = output_json_dir / f"{document.metadata.document_id}.json"
-                with open(json_file, 'w') as f:
-                    f.write(document.to_json())
-                logger.info(f"  Wrote JSON: {json_file.name}")
+                for document in documents:
+                    json_file = output_json_dir / f"{document.metadata.document_id}.json"
+                    with open(json_file, 'w') as f:
+                        f.write(document.to_json())
+                if len(documents) == 1:
+                    logger.info(f"  Wrote JSON: {json_file.name}")
+                else:
+                    logger.info(f"  Wrote {len(documents)} JSON files")
             
             # Track export failures
             export_failed = False
             export_error = None
             
-            # Export to OpenSearch (two-index architecture)
-            if export_opensearch and opensearch_summary_exporter and opensearch_ts_exporter:
-                try:
-                    # Export summary (without raw time series)
-                    summary_dict = document.to_dict_summary_only()
-                    doc_id = document.metadata.document_id
+            # Export each document to OpenSearch (two-index architecture)
+            for document in documents:
+                if export_opensearch and opensearch_summary_exporter and opensearch_ts_exporter:
+                    try:
+                        # Export summary (without raw time series)
+                        summary_dict = document.to_dict_summary_only()
+                        doc_id = document.metadata.document_id
                     
-                    # Try to create document (will fail if duplicate exists)
-                    result = opensearch_summary_exporter.create_document(summary_dict, doc_id=doc_id)
-                    operation = result['result']  # 'created' or 'duplicate'
-                    
-                    # Track whether this was a new document or duplicate
-                    if operation == 'created':
-                        stats.record_document_created()
-                        logger.info(f"  Created in OpenSearch (summary): {doc_id}")
+                        # Try to create document (will fail if duplicate exists)
+                        result = opensearch_summary_exporter.create_document(summary_dict, doc_id=doc_id)
+                        operation = result['result']  # 'created' or 'duplicate'
                         
-                        # Export time series only if summary was created (not duplicate)
-                        ts_count = sum(
-                            len(run.timeseries) for run in document.results.runs.values() 
-                            if run.timeseries
-                        )
-                        
-                        if ts_count > 0:
-                            ts_result = opensearch_ts_exporter.export_from_zathras_document(document, batch_size=500)
-                            stats.record_timeseries_indexed(ts_result['successful'])
-                            logger.info(f"  Exported to OpenSearch (timeseries): {ts_result['successful']}/{ts_result['total']} points")
+                        # Track whether this was a new document or duplicate
+                        if operation == 'created':
+                            stats.record_document_created()
+                            if len(documents) == 1:
+                                logger.info(f"  Created in OpenSearch (summary): {doc_id}")
                             
-                            if ts_result['failed'] > 0:
-                                logger.warning(f"     Failed: {ts_result['failed']} time series points")
-                    
-                    elif operation == 'duplicate':
-                        stats.record_duplicate()
+                            # Export time series only if summary was created (not duplicate)
+                            ts_count = sum(
+                                len(run.timeseries) for run in document.results.runs.values() 
+                                if run.timeseries
+                            )
+                            
+                            if ts_count > 0:
+                                ts_result = opensearch_ts_exporter.export_from_zathras_document(document, batch_size=500)
+                                stats.record_timeseries_indexed(ts_result['successful'])
+                                if len(documents) == 1:
+                                    logger.info(f"  Exported to OpenSearch (timeseries): {ts_result['successful']}/{ts_result['total']} points")
+                                
+                                if ts_result['failed'] > 0:
+                                    logger.warning(f"     Failed: {ts_result['failed']} time series points")
                         
-                        # Count time series that would have been indexed (but skipped due to duplicate)
-                        ts_count = sum(
-                            len(run.timeseries) for run in document.results.runs.values() 
-                            if run.timeseries
-                        )
-                        if ts_count > 0:
-                            stats.record_timeseries_skipped(ts_count)
+                        elif operation == 'duplicate':
+                            stats.record_duplicate()
+                            
+                            # Count time series that would have been indexed (but skipped due to duplicate)
+                            ts_count = sum(
+                                len(run.timeseries) for run in document.results.runs.values() 
+                                if run.timeseries
+                            )
+                            if ts_count > 0:
+                                stats.record_timeseries_skipped(ts_count)
+                            
+                            if len(documents) == 1:
+                                logger.warning(f"  Duplicate detected, skipped: {doc_id}")
                         
-                        logger.warning(f"  Duplicate detected, skipped: {doc_id}")
-                    
-                except Exception as e:
-                    export_failed = True
-                    export_error = f"OpenSearch export failed: {e}"
-                    logger.error(f"  {export_error}")
-            
-            # Export to Horreum
-            if export_horreum and horreum_exporter:
-                try:
-                    run_id = horreum_exporter.export_zathras_document(document)
-                    logger.info(f"  Exported to Horreum: run {run_id}")
-                except Exception as e:
-                    if not export_failed:
+                    except Exception as e:
                         export_failed = True
-                        export_error = f"Horreum export failed: {e}"
-                    logger.error(f"  Horreum export failed: {e}")
+                        export_error = f"OpenSearch export failed: {e}"
+                        logger.error(f"  {export_error}")
+                
+                # Export to Horreum
+                if export_horreum and horreum_exporter:
+                    try:
+                        run_id = horreum_exporter.export_zathras_document(document)
+                        if len(documents) == 1:
+                            logger.info(f"  Exported to Horreum: run {run_id}")
+                    except Exception as e:
+                        if not export_failed:
+                            export_failed = True
+                            export_error = f"Horreum export failed: {e}"
+                        logger.error(f"  Horreum export failed: {e}")
+            
+            # Add summary logging for multi-document exports
+            if len(documents) > 1 and export_opensearch:
+                logger.info(f"  Processed {len(documents)} PyPerf benchmark documents")
             
             # Record success or failure
             if export_failed:
@@ -441,7 +463,7 @@ def process_result_directory(
                 stats.record_success(test_name)
                 results.append({
                     'test_name': test_name,
-                    'document_id': document.metadata.document_id,
+                    'document_id': documents[0].metadata.document_id if len(documents) == 1 else f"{len(documents)} documents",
                     'status': 'success'
                 })
             
@@ -554,6 +576,7 @@ Examples:
     
     # Process all directories
     stats = ProcessingStats()
+    stats.opensearch_export_enabled = args.opensearch
     
     for i, result_dir in enumerate(result_dirs, 1):
         logger.info(f"[{i}/{len(result_dirs)}] Processing directory: {result_dir}")
