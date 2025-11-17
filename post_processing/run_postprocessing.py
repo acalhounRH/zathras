@@ -38,6 +38,7 @@ from .processors.phoronix_processor import PhoronixProcessor
 from .processors.uperf_processor import UperfProcessor
 from .processors.pig_processor import PigProcessor
 from .processors.autohpl_processor import AutoHPLProcessor
+from .processors.speccpu2017_processor import SpecCPU2017Processor
 
 # Import exporters
 from .exporters.opensearch_exporter import OpenSearchExporter
@@ -93,6 +94,7 @@ PROCESSOR_REGISTRY = {
     'uperf': UperfProcessor,
     'pig': PigProcessor,
     'auto_hpl': AutoHPLProcessor,
+    'speccpu2017': SpecCPU2017Processor,
 }
 
 
