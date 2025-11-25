@@ -58,6 +58,88 @@ Tests Processed:
 
 ---
 
+## Detailed Usage
+
+### Benchmark Support Status
+
+| Benchmark | Post-Processing Support | Processor | Notes |
+|-----------|------------------------|-----------|-------|
+| CoreMark | Supported | `coremark_processor.py` | Single-thread CPU performance |
+| CoreMark Pro | Supported | `coremark_pro_processor.py` | 9 workload types |
+| FIO | Supported | `fio_processor.py` | Flexible I/O tester |
+| HPL (autohpl) | Supported | `autohpl_processor.py` | High Performance Computing Linpack |
+| Passmark | Supported | `passmark_processor.py` | CPU & Memory marks |
+| Phoronix Test Suite | Supported | `phoronix_processor.py` | 51 sub-tests (BOPs) |
+| Pig | Supported | `pig_processor.py` | Processor scheduler efficiency |
+| PyPerf | Supported | `pyperf_processor.py` | 90 Python benchmarks, 5,680 time series points |
+| SPEC CPU 2017 | Supported | `speccpu2017_processor.py` | Compute-intensive performance suite |
+| SpecJBB | Supported | `specjbb_processor.py` | Java business benchmark (Critical/Max-jOPS) |
+| STREAM | Supported | `streams_processor.py` | Memory bandwidth (Copy, Scale, Add, Triad) |
+| Uperf | Supported | `uperf_processor.py` | Network performance (IOPS, latency, throughput) |
+| HammerDB | Not Supported | - | Database benchmarking (MariaDB, PostgreSQL) |
+| IOzone | Not Supported | - | File system benchmarking |
+| Linpack | Not Supported | - | Licensed Linpack benchmark |
+| NUMA STREAM | Not Supported | - | NUMA memory bandwidth extension |
+
+**12 of 16 benchmarks supported** | **35,000+ time series points per production run**
+
+---
+
+## Installation & Setup
+
+### Prerequisites
+- Python 3.8+
+- Zathras benchmark results
+- OpenSearch or Horreum access (optional for local testing)
+
+### Install Dependencies
+
+```bash
+cd /path/to/zathras
+pip3 install -r post_processing/requirements.txt
+```
+
+**Dependencies:**
+- `pyyaml` - Configuration and result parsing
+- `python-dateutil` - Timestamp handling
+- `requests` - HTTP for Horreum
+
+### Configuration
+
+Create your configuration file:
+
+```bash
+# Copy example
+cp post_processing/config/export_config_example.yml post_processing/config/export_config.yml
+
+# Edit with your settings
+vim post_processing/config/export_config.yml
+```
+
+Example config:
+```yaml
+opensearch:
+  url: "https://opensearch.example.com"
+  summary_index: "zathras-results"        # Summary documents
+  timeseries_index: "zathras-timeseries"  # Individual time series points
+  username: "example-user"
+  password: "your-password"
+  verify_ssl: false  # Set to true for production
+
+horreum:
+  url: "http://localhost:8080"
+  username: "your-horreum-username"
+  password: "your-horreum-password"
+  test_name: "Zathras Benchmarks"
+
+processing:
+  batch_size: 500
+  continue_on_error: true
+  verbose: false
+```
+
+---
+
 ## CI/CD Integration with Burden
 
 ### Automatic Export After Every Benchmark Run
@@ -162,88 +244,6 @@ GET /zathras-results/_search
   }
 }
 ```
-
----
-
-## Installation & Setup
-
-### Prerequisites
-- Python 3.8+
-- Zathras benchmark results
-- OpenSearch or Horreum access (optional for local testing)
-
-### Install Dependencies
-
-```bash
-cd /path/to/zathras
-pip3 install -r post_processing/requirements.txt
-```
-
-**Dependencies:**
-- `pyyaml` - Configuration and result parsing
-- `python-dateutil` - Timestamp handling
-- `requests` - HTTP for Horreum
-
-### Configuration
-
-Create your configuration file:
-
-```bash
-# Copy example
-cp post_processing/config/export_config_example.yml post_processing/config/export_config.yml
-
-# Edit with your settings
-vim post_processing/config/export_config.yml
-```
-
-Example config:
-```yaml
-opensearch:
-  url: "https://opensearch.example.com"
-  summary_index: "zathras-results"        # Summary documents
-  timeseries_index: "zathras-timeseries"  # Individual time series points
-  username: "example-user"
-  password: "your-password"
-  verify_ssl: false  # Set to true for production
-
-horreum:
-  url: "http://localhost:8080"
-  username: "your-horreum-username"
-  password: "your-horreum-password"
-  test_name: "Zathras Benchmarks"
-
-processing:
-  batch_size: 500
-  continue_on_error: true
-  verbose: false
-```
-
----
-
-## Detailed Usage
-
-### Benchmark Support Status
-
-| Benchmark | Post-Processing Support | Processor | Notes |
-|-----------|------------------------|-----------|-------|
-| CoreMark | Supported | `coremark_processor.py` | Single-thread CPU performance |
-| CoreMark Pro | Supported | `coremark_pro_processor.py` | 9 workload types |
-| Passmark | Supported | `passmark_processor.py` | CPU & Memory marks |
-| Phoronix Test Suite | Supported | `phoronix_processor.py` | 51 sub-tests (BOPs) |
-| PyPerf | Supported | `pyperf_processor.py` | 90 Python benchmarks, 5,680 time series points |
-| SpecJBB | Supported | `specjbb_processor.py` | Java business benchmark (Critical/Max-jOPS) |
-| STREAM | Supported | `streams_processor.py` | Memory bandwidth (Copy, Scale, Add, Triad) |
-| Uperf | Supported | `uperf_processor.py` | Network performance (IOPS, latency, throughput) |
-| FIO | Not Supported | - | Flexible I/O tester |
-| HammerDB | Not Supported | - | Database benchmarking (MariaDB, PostgreSQL) |
-| HPL (autohpl) | Not Supported | - | High Performance Computing Linpack |
-| IOzone | Not Supported | - | File system benchmarking |
-| Linpack | Not Supported | - | Licensed Linpack benchmark |
-| NUMA STREAM | Not Supported | - | NUMA memory bandwidth extension |
-| pig | Not Supported | - | Processor scheduler efficiency |
-| SPEC CPU 2017 | Not Supported | - | Compute-intensive performance suite |
-
-**8 of 16 benchmarks supported** | **35,000+ time series points per production run**
 
 ---
 

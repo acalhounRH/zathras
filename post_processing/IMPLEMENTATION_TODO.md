@@ -706,6 +706,88 @@ python-dateutil>=2.8.0
 
 ---
 
+### [x] Task 27: Pig Processor
+**File:** `post_processing/processors/pig_processor.py`  
+**Purpose:** Process Apache Pig scheduler efficiency benchmark results  
+**Priority:** MEDIUM  
+**Dependencies:** Task 5 (Base processor)
+
+**What to build:**
+- Parse `results_pig.csv` (thread count vs scheduling efficiency)
+- Extract version information
+- Generate time series for efficiency across thread configurations
+- Calculate summary statistics (min, max, mean, median, stddev)
+
+**Status:** ✅ COMPLETED - 150 lines, parses CSV data, generates time series
+
+---
+
+### [x] Task 28: Auto HPL Processor
+**File:** `post_processing/processors/autohpl_processor.py`  
+**Purpose:** Process Auto HPL (High-Performance Linpack) benchmark results  
+**Priority:** MEDIUM  
+**Dependencies:** Task 5 (Base processor)
+
+**What to build:**
+- Parse `hpl-*.csv` files (matrix size, GFLOPS, time, process grid)
+- Extract HPL configuration (block size, P×Q grid)
+- Generate single run with primary metric (GFLOPS)
+
+**Status:** ✅ COMPLETED - 125 lines, parses CSV format, extracts configuration
+
+---
+
+### [x] Task 29: SPEC CPU 2017 Processor
+**File:** `post_processing/processors/speccpu2017_processor.py`  
+**Purpose:** Process SPEC CPU 2017 compute benchmark results  
+**Priority:** HIGH  
+**Dependencies:** Task 5 (Base processor)
+
+**What to build:**
+- Handle nested archive structure (ZIP → TAR → result/)
+- Parse integer and floating-point suite CSV files
+- Extract per-benchmark metrics (rate, runtime, copies)
+- Calculate geometric mean for overall SPEC score
+- Generate two runs (one per suite) in single document
+
+**Status:** ✅ COMPLETED - 285 lines, parses both intrate/fprate CSV formats, calculates suite scores
+
+---
+
+### [x] Task 30: FIO Processor
+**File:** `post_processing/processors/fio_processor.py`  
+**Purpose:** Process FIO (Flexible I/O Tester) benchmark results  
+**Priority:** HIGH  
+**Dependencies:** Task 5 (Base processor)
+
+**What to build:**
+- Parse `fio-results.json` for comprehensive metrics
+- Extract job-level details (bandwidth, IOPS, latency percentiles)
+- Parse log files (`fio_bw.N.log`, `fio_iops.N.log`) for time series
+- Aggregate metrics across multiple jobs/disks
+- Generate one run per unique workload (operation + block size + ndisks + iodepth)
+
+**Status:** ✅ COMPLETED - 670 lines, parses JSON and log files, aggregates multi-job metrics, generates ~120 time series points per run
+
+---
+
+### [x] Task 31: CoreMark Field Count Optimization
+**File:** `post_processing/processors/coremark_processor.py`  
+**Purpose:** Reduce OpenSearch field count for CoreMark validation data  
+**Priority:** HIGH  
+**Dependencies:** Task 6 (CoreMark processor)
+
+**Issue:** CoreMark stores per-thread CRC validation checksums as individual fields, causing 2,370 fields for 256-core systems, exceeding OpenSearch limits.
+
+**Solution Implemented:**
+- Convert flat validation dict to nested array of objects
+- Old: `{"0_crcfinal": "...", "1_crcfinal": "...", ...}` → 1,024+ fields
+- New: `{"threads": [{"thread": 0, "crcfinal": "..."}, ...]}` → ~5 fields with nested type
+
+**Status:** ✅ COMPLETED - Field count reduced by 85% (~2,000 fields saved), dynamic template added to index template
+
+---
+
 ## Recommended Implementation Order
 
 ### **Week 1: Foundation** (HIGH PRIORITY) ✅ COMPLETE
@@ -741,9 +823,9 @@ python-dateutil>=2.8.0
 
 - [x] **Phase 1-2 Complete**: CoreMark processor generates valid object-based JSON ✅
 - [x] **Phase 3 Complete**: Documents successfully indexed in OpenSearch with correct mappings ✅
-- [x] **Phase 4 Complete**: All 8 production benchmark processors implemented ✅
+- [x] **Phase 4 Complete**: All 12 production benchmark processors implemented ✅
 - [x] **Phase 5 Complete**: End-to-end orchestrator with recursive discovery and batch processing ✅
-- [x] **Phase 6 Complete**: Export logic verified with live OpenSearch, 78 benchmarks processed ✅
+- [x] **Phase 6 Complete**: Export logic verified with live OpenSearch, content-based deduplication working ✅
 - [x] **Phase 7 Partial**: README with how-to-run and CI/CD integration complete ✅
 
 ---
@@ -799,16 +881,18 @@ python-dateutil>=2.8.0
 - ✅ **Phase 1**: Foundation & Utilities (4/4 tasks) - ~1,790 lines
 - ✅ **Phase 2**: Core Processing (3/3 tasks) - ~1,165 lines  
 - ✅ **Phase 3**: OpenSearch & Horreum (3/3 tasks) - ~680 lines
-- ✅ **Phase 4**: Production Dataset Processors (7/7 tasks) - ~1,730 lines
+- ✅ **Phase 4**: Production Dataset Processors (11/11 tasks) - ~2,960 lines
 - ✅ **Phase 5**: Orchestration (1/1 tasks) - ~470 lines
 - 🚧 **Phase 6**: Testing (partial) - Production verification complete, formal suite pending
 - 🚧 **Phase 7**: Documentation (partial) - README complete, querying guide pending
 
 **Key Achievements:**
-- ✅ **20 of 26 tasks completed (77%)**
-- ✅ **~6,305 lines of production code**
-- ✅ **8 benchmark processors**: CoreMark, STREAMS, SpecJBB, PyPerf, CoreMark Pro, Passmark, Phoronix, Uperf
+- ✅ **27 of 32 tasks completed (84%)**
+- ✅ **~8,164 lines of production code**
+- ✅ **12 benchmark processors**: CoreMark, STREAMS, SpecJBB, PyPerf, CoreMark Pro, Passmark, Phoronix, Uperf, Pig, Auto HPL, SPEC CPU 2017, FIO
 - ✅ **Two-index architecture**: Handles PyPerf's 5,680 time series points per test
+- ✅ **Content-based deduplication**: SHA256 hash prevents duplicate uploads to OpenSearch
+- ✅ **CoreMark field optimization**: Nested validation arrays reduce field count by 85%
 - ✅ **Production tested**: 34 Azure instances, 78 benchmarks, 109 seconds processing time
 - ✅ **~35,000+ time series points** exported to OpenSearch
 - ✅ **Metadata extraction**: OS vendor, cloud provider, instance type, iteration, scenario
